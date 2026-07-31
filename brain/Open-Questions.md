@@ -21,6 +21,18 @@ Examples discussed:
 - Database query
 - Logs
 
+### How should Coordinators communicate?
+
+Status: Open
+
+Possible options discussed:
+
+- Through the Orchestrator only.
+- Direct Coordinator-to-Coordinator communication.
+- Shared task queue.
+
+No decision has been made.
+
 ## Resolution Notes
 
 <!-- Placeholder -->
