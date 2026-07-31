@@ -47,6 +47,16 @@ The exact rules for Task decomposition remain open.
 
 Status: Open
 
+### What fields should a Work Package contain?
+
+Status: Open
+
+Notes:
+
+We know a Work Package is the handover object between stages.
+
+The exact structure has not yet been designed.
+
 ## Resolution Notes
 
 <!-- Placeholder -->
