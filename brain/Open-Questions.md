@@ -8,7 +8,19 @@ Track unresolved project questions.
 
 <!-- Placeholder -->
 
+### What counts as evidence?
+
+Status: Unresolved design question.
+
+Examples discussed:
+
+- Git diff
+- Test output
+- Screenshot
+- API response
+- Database query
+- Logs
+
 ## Resolution Notes
 
 <!-- Placeholder -->
-
