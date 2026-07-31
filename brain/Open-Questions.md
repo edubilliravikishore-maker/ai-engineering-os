@@ -33,6 +33,20 @@ Possible options discussed:
 
 No decision has been made.
 
+### How should Features be decomposed into Tasks?
+
+Goal
+↓
+
+Feature
+↓
+
+Tasks
+
+The exact rules for Task decomposition remain open.
+
+Status: Open
+
 ## Resolution Notes
 
 <!-- Placeholder -->
