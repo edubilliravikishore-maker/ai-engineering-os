@@ -57,6 +57,18 @@ We know a Work Package is the handover object between stages.
 
 The exact structure has not yet been designed.
 
+### What evidence is sufficient to prove work?
+
+Status: Open
+
+Notes:
+
+The system currently defines the acceptance flow.
+
+The exact evidence required by Backend, Frontend, QA, Review, and Coordinators remains undefined.
+
+This will become the focus of the next checkpoint.
+
 ## Resolution Notes
 
 <!-- Placeholder -->
