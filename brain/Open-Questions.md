@@ -69,6 +69,18 @@ The exact evidence required by Backend, Frontend, QA, Review, and Coordinators r
 
 This will become the focus of the next checkpoint.
 
+### How should the Orchestrator's knowledge and context be provided?
+
+Status: Open
+
+Notes:
+
+The Orchestrator's decision and escalation flow has now been defined.
+
+The mechanism for providing the Orchestrator with the appropriate organizational knowledge, engineering standards, and context has not yet been designed.
+
+This will be addressed in a future checkpoint.
+
 ## Resolution Notes
 
 <!-- Placeholder -->
