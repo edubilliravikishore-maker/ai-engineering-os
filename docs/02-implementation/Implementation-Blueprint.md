@@ -183,6 +183,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 ### 4.1 Conceptual Entities
 
+> [!NOTE]
+> Entity clarifications recorded in [ADR-003](../../adr/ADR-003.md) are authoritative for Foundation v1 and are reflected below.
+
 #### 1. Feature
 - **Identity:** `id` (UUID), `slug` (string), `title` (string).
 - **Core Attributes:** `goal` (text), `requirements` (structured list), `in_scope` (list), `out_of_scope` (list), `acceptance_criteria` (list of testable assertions), `status` (`FeatureStatus`), `coordinator_id` (UUID), `created_at`, `updated_at`.
@@ -190,8 +193,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 #### 2. Feature Plan
 - **Identity:** `id` (UUID), `feature_id` (UUID), `revision_number` (int).
-- **Core Attributes:** `status` (`PlanStatus`), `required_capabilities` (list, e.g., `["backend", "frontend", "qa"]`), `task_definitions` (list of planned task specs with dependency graphs), `created_by` (UUID), `created_at`.
+- **Core Attributes:** `status` (`PlanStatus`), `required_capabilities` (list, e.g., `["backend", "frontend", "qa"]`), `task_definitions` (list of `TaskDefinition`: `key`, `title`, `capability`, `depends_on`), `created_by` (UUID), `created_at`.
 - **Relationship:** Belongs to one Feature; defines planned Tasks.
+- **Task Definition Keys (ADR-003 3.8):** `key` is a **plan-local** slug and `depends_on` references other plan-local keys. Dependencies cannot reference OS `TaskId` values because Task identities do not exist at planning time, and Design Session 007 requires Tasks to be created dependency-driven rather than speculatively. A plan's key set must be unique, fully resolvable, and acyclic.
 
 #### 3. Task
 - **Identity:** `id` (UUID), `feature_id` (UUID), `title` (string).
@@ -200,13 +204,15 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 #### 4. Task Revision
 - **Identity:** `id` (UUID), `task_id` (UUID), `revision_number` (int).
-- **Core Attributes:** `status` (`RevisionStatus`), `created_by_worker_id` (UUID), `work_package_id` (UUID, optional), `review_decision_id` (UUID, optional), `qa_report_id` (UUID, optional), `created_at`.
+- **Core Attributes:** `created_by_worker_id` (UUID), `work_package_id` (UUID, optional), `review_decision_id` (UUID, references `ReviewDecision`, optional), `qa_report_id` (UUID, optional), `created_at`.
 - **Invariant:** Strictly additive. History is never overwritten.
+- **No Stored Status (ADR-003 3.1):** A Task Revision carries **no** active/superseded marker. The authoritative active-revision pointer is `Task.active_revision_number` (§4.1 #3). Design Session 006's requirement that only one Revision is active at a time is satisfied by **derivation** — the head of a contiguous, append-only history — because storing the marker would require writing to an already recorded Revision, contradicting the append-only invariant in §7.1.
 
 #### 5. Work Package
 - **Identity:** `id` (UUID), `task_revision_id` (UUID).
 - **Core Attributes:** `summary` (string), `claims` (list of `Claim` objects: `id`, `claim_type`, `description`), `verification_guide` (structured instructions, endpoints, expected outputs), `worker_notes` (design decisions, assumptions), `risks` (optional text), `submitted_at`.
 - **Invariant:** Immutable once submitted.
+- **Claim Type (ADR-003 3.7):** `claim_type` is a **descriptive, non-enumerated label**. It never feeds a deterministic OS rule; it supports the Reviewer's Stage 2 judgement that evidence actually supports the claim (Design Session 005). Mandatory System Evidence requirements are keyed by **Task/Worker capability**, not by `claim_type`.
 
 #### 6. Evidence Record
 - **Identity:** `id` (UUID), `work_package_id` (UUID, optional), `qa_report_id` (UUID, optional).
@@ -218,15 +224,28 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 #### 7. QA Report & QA Defect
 - **Identity:** `id` (UUID), `feature_id` (UUID), `task_revision_id` (UUID, optional).
-- **Core Attributes:** `is_final_pass` (bool), `tested_scope` (list), `results` (list of test results), `defects` (list of `QADefect`: `id`, `title`, `severity`, `priority`, `is_blocker`, `status`), `evidence_ids` (list of Evidence UUIDs), `status` (`QAStatus`: `PASSED`, `FAILED`, `BLOCKED`), `created_at`.
+- **Core Attributes:** `is_final_pass` (bool), `tested_scope` (list), `results` (list of `TestResult`: `name`, `passed`, `details`), `defects` (list of `QADefect`: `id`, `title`, `severity`, `priority`, `is_blocker`, `status`), `evidence_ids` (list of Evidence UUIDs), `status` (`QAStatus`: `PASSED`, `FAILED`, `BLOCKED`), `created_at`.
+- **Defect Status (ADR-003 3.6):** `status` is `DefectStatus`: `OPEN` / `RESOLVED`. This is the minimum vocabulary that makes Design Session 009's "zero unresolved in-scope defects" machine-computable.
+- **Severity & Priority (ADR-003 3.6):** `severity` and `priority` remain **non-empty free-text labels**. Design Session 004 explicitly leaves the classification system open, and no taxonomy is introduced here. They feed Coordinator remediation prioritisation, which is agent judgement rather than deterministic OS enforcement.
+- **Open Question — In-Scope Defect Identification:** `QADefect` carries no in-scope marker, so "zero unresolved **in-scope** defects" is not yet deterministically enforceable. See §14, item 5. **Unresolved.**
 
 #### 8. Decision & Decision Acknowledgement
 - **Identity:** `id` (UUID), `scope` (`DECISION_SCOPE`: `FEATURE`, `SYSTEM`, `BUSINESS`).
 - **Core Attributes:** `decided_by_role` (`ActorRole`), `decided_by_id` (UUID), `problem` (text), `decision_text` (text), `reasoning` (text), `alternatives_considered` (list), `affected_domains` (list), `created_at`.
 - **Acknowledgements:** `acknowledgements` (list of `DecisionAcknowledgement`: `actor_id`, `actor_role`, `acknowledged_at`).
+- **Scope (ADR-003 3.2):** `Decision` records **architectural, system-level, and business escalation decisions** only (Design Session 008). It is not the record of a code review outcome.
+- **Authority:** `FEATURE` scope may be decided by `COORDINATOR`, `ORCHESTRATOR`, or `BUILDER`; `SYSTEM` by `ORCHESTRATOR` or `BUILDER`; `BUSINESS` by `BUILDER` only. This follows the escalation chain in Design Sessions 004 and 008. A `WORKER` holds no decision authority at any scope.
+
+#### 8b. Review Decision
+- **Identity:** `id` (UUID), `task_revision_id` (UUID).
+- **Core Attributes:** `reviewer_id` (UUID), `outcome` (`ReviewOutcome`: `APPROVED`, `CHANGES_REQUESTED`), `notes` (text, mandatory), `created_at`.
+- **Distinct From `Decision` (ADR-003 3.2):** A Review Decision is an **independent review outcome for one Task Revision**. It is deliberately **not** merged into `Decision` (#8): merging would place every routine code review into permanent architectural decision history, and would break decision authority since `REVIEWER` holds authority at no `DecisionScope`.
+- **Invariant:** `notes` are mandatory for both outcomes. §5.2 requires review notes for an approval and explicit feedback for a change request.
 
 #### 9. Actor & Agent
 - **Identity:** `id` (UUID), `role` (`ActorRole`: `BUILDER`, `ORCHESTRATOR`, `COORDINATOR`, `WORKER`, `REVIEWER`, `QA`), `domain` (optional string), `name` (string), `is_active` (bool).
+- **Capabilities (ADR-003 3.9):** `capabilities` (set of `CapabilityType`). A `WORKER` **must** declare at least one capability. Without this field the §5.2 `READY -> ASSIGNED` rule ("Worker ID is active and possesses matching capability") is unenforceable. Task assignment requires an **active Worker whose capabilities include the Task's capability**.
+- **Coordinator Lifecycle — Deferred (ADR-003 3.10):** Foundation v1 uses `is_active` only, where `is_active = true` corresponds to Design Session 009 `ACTIVE`. The DS-009 Coordinator lifecycle (`PROPOSED -> APPROVED -> ACTIVE -> SUSPENDED -> RETIRED`), the Domain Registry, and the Builder-approval registration workflow **remain authoritative architecture and are explicitly deferred, not rejected**. They **MUST** be resolved before the Domain Registry is implemented. See §14, item 7.
 
 #### 10. Event & State Transition Audit Record
 - **Event:** `id` (UUID), `event_type` (string), `aggregate_type` (string), `aggregate_id` (UUID), `actor_id` (UUID), `actor_role` (string), `payload` (JSONB), `occurred_at`.
@@ -339,6 +358,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | `IN_QA` | `REVISION_REQUIRED` | `QA` / `COORDINATOR` | QA Report records `FAILED` with defect list. | Missing defect descriptions or severity ratings. |
 | `REVISION_REQUIRED` | `IN_PROGRESS` | `WORKER` | Worker creates incremented Task Revision (`revision_number + 1`). | Attempting to overwrite existing revision. |
 
+> [!NOTE]
+> **No `BLOCKED` state in Foundation v1 (ADR-003 3.3).** The Task lifecycle above is complete and intentionally defines no `BLOCKED` state. Design Session 008 requires that the OS prevent affected Workers continuing knowingly invalid work after an Orchestrator decision; that capability is **deferred** from Foundation v1 and is knowingly unserved (see §14, item 6). The `BLOCKED` reference in the §6 event table is a forward reference to that future capability, not a Foundation v1 state.
+
 ---
 
 ### 5.3 Work Package Lifecycle
@@ -347,6 +369,43 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
   - A Work Package in `SUBMITTED` status is **immutable**.
   - No actor (including Worker, Reviewer, or Coordinator) can edit a submitted Work Package.
   - Fixes require generating a new Revision and a new Work Package entity.
+
+#### Authority Model (ADR-003 3.5)
+
+The Work Package lifecycle uses a **single authority model**. Only `DRAFT -> SUBMITTED` is actor-requested. Every subsequent state is an **OS projection** of the corresponding Task lifecycle outcome.
+
+| From State | To State | Initiator | Driven By |
+| :--- | :--- | :--- | :--- |
+| `DRAFT` | `SUBMITTED` | `WORKER` | Task `IN_PROGRESS` -> `SUBMITTED` (§5.2) |
+| `SUBMITTED` | `VALIDATED` | `OS` | OS Stage 1 mandatory-evidence validation (Design Session 005) |
+| `VALIDATED` | `REVIEWED` | `OS` | Task `IN_REVIEW` -> `IN_QA` / -> `REVISION_REQUIRED` (§5.2) |
+| `REVIEWED` | `ACCEPTED` | `OS` | Task `IN_QA` -> `ACCEPTED` (§5.2) |
+| `REVIEWED` | `REJECTED` | `OS` | Task -> `REVISION_REQUIRED` (§5.2) |
+
+**Reviewer, QA, and Coordinator hold no independent authority over Work Package state.** The actor performs the action at the Task level; the OS maintains the Work Package projection. Assigning per-role authority here would create a second authority model competing with the Task state machine over the same real-world action, so authority stays defined in exactly one place.
+
+---
+
+### 5.4 Feature Plan Lifecycle
+
+Recorded per ADR-003 3.4. Design Session 009 defines the state chain; the requester authority below is the Foundation v1 clarification.
+
+```
+DRAFT ──→ READY ──→ ACTIVE ──→ COMPLETED
+                       │
+                       └─────→ SUPERSEDED
+```
+
+| From State | To State | Requester Role | Notes |
+| :--- | :--- | :--- | :--- |
+| `DRAFT` | `READY` | `COORDINATOR` | The Coordinator owns the Feature Plan (Design Session 009). |
+| `READY` | `ACTIVE` | `COORDINATOR` | Activation instantiates Tasks; dependency-free tasks move to `READY`. |
+| `ACTIVE` | `COMPLETED` | `COORDINATOR` / `OS` | `OS` only when completion is deterministically derived from prerequisites, mirroring §5.1 `IN_PROGRESS` -> `IN_VALIDATION`. |
+| `ACTIVE` | `SUPERSEDED` | `COORDINATOR` | A plan revision supersedes the active plan rather than silently overwriting it (Design Session 009). |
+
+- **Terminal States:** `COMPLETED` and `SUPERSEDED`.
+- **Deferred (ADR-003 3.4):** `DRAFT -> SUPERSEDED` and `READY -> SUPERSEDED` are **not** permitted in Foundation v1.
+- **Open Question — Post-Supersession Routing:** Design Session 009 does not state what happens to the Feature when its plan is superseded, or how the successor plan revision is instantiated. See §14, item 8. **Unresolved.**
 
 ---
 
@@ -383,7 +442,7 @@ Every significant OS action generates a structured domain event persisted synchr
 | `ReviewCompleted` | Reviewer | Coordinator / Worker | Yes (`IN_QA` or `REVISION_REQ`) | Coordinator / Worker | Reviewer outcome (`APPROVED` vs `CHANGES_REQUESTED`). |
 | `QAReportSubmitted` | QA | Coordinator / Worker | Yes (`ACCEPTED` or `REVISION_REQ`) | Coordinator / Worker | QA verification results, test runs, and defect list. |
 | `FeatureAccepted` | Coordinator | Orchestrator / Builder | Yes (`ACCEPTED`) | Orchestrator / Builder | Feature delivery accepted by Coordinator. |
-| `EscalationRaised` | Worker / Coordinator | Higher Authority | Yes (`BLOCKED`) | Orchestrator / Builder | Authority boundary reached; decision requested. |
+| `EscalationRaised` | Worker / Coordinator | Higher Authority | No (see ADR-003 3.3) | Orchestrator / Builder | Authority boundary reached; decision requested. Foundation v1 defines **no** `BLOCKED` state; escalation blocking is a deferred capability (§14, item 6). |
 
 ---
 
@@ -410,6 +469,7 @@ Every significant OS action generates a structured domain event persisted synchr
 
 1. **Authoritative State:** Relational tables holding the current, active status and relationships of living entities (`features.status`, `tasks.status`, `tasks.assigned_worker_id`).
 2. **Append-Only History:** Immutable records capturing the exact sequence of engineering actions, revisions, evidence, and audit decisions.
+3. **Insert-Only Enforcement (ADR-003 3.1):** Rows in the append-only tables are **inserted, never updated**. In particular, `task_revisions` rows carry no mutable status column; a Revision is never rewritten or re-marked once recorded. The active-revision pointer lives on `tasks.active_revision_number`, which is authoritative-state, not history.
 
 ### 7.2 Transactional Transition Boundary & Invariant
 All OS state transitions are protected by explicit PostgreSQL ACID transactions.
@@ -627,54 +687,67 @@ Step 11: History & Audit Verification
 
 ## 11. Initial Project Structure
 
+> [!NOTE]
+> Status markers reflect the repository as of the completion of Checkpoint 2. `[IMPLEMENTED — CPn]` marks code that exists today; `[PLANNED — CPn]` marks the Foundation v1 target for a later checkpoint (§13). Governance and documentation directories not central to the runtime (`archive/`, `assets/`, `experiments/`, `founders/`, `knowledge/`, `labs/`, `playbooks/`, `prompts/`, `reference/`, `templates/`, `weekly/`) are summarized rather than expanded.
+
 ```
 AI-Engineering-OS/
 ├── .gitignore
+├── .env.example                # Example environment configuration
+├── LICENSE
 ├── README.md
 ├── pyproject.toml              # Build config, dependencies, ruff, mypy, pytest
+├── requirements.txt            # Runtime dependencies (mirrors pyproject.toml)
+├── requirements-dev.txt        # Development & quality-check dependencies
 ├── alembic.ini                 # Database migration config
 ├── docker-compose.yml          # Local PostgreSQL + OS runtime
 ├── Dockerfile                  # OS application container
 │
-├── adr/                        # Architecture Decision Records
-├── brain/                      # Working memory & developer resources
-├── design-sessions/            # Frozen architecture design sessions
+├── adr/                        # Architecture Decision Records (ADR-001, ADR-002, ADR-003)
+├── brain/                      # Working memory, decision index & open questions
+├── design-sessions/            # Frozen architecture design sessions (001–009)
 ├── docs/                       # Permanent project documentation
 │   ├── 00-vision/
 │   ├── 01-architecture/
 │   └── 02-implementation/
 │       └── Implementation-Blueprint.md
 │
-├── migrations/                 # Alembic migration versions
+├── migrations/                 # Alembic migration versions        [IMPLEMENTED — CP1]
 │   ├── env.py
 │   ├── script.py.mako
 │   └── versions/
+│       └── 0001_baseline.py
 │
 ├── src/
 │   └── ai_engineering_os/
-│       ├── __init__.py
-│       ├── main.py             # FastAPI entrypoint
-│       ├── config.py           # Environment & OS settings
+│       ├── __init__.py                                             [IMPLEMENTED — CP1]
+│       ├── main.py             # FastAPI entrypoint                 [IMPLEMENTED — CP1]
+│       ├── config.py           # Environment & OS settings          [IMPLEMENTED — CP1]
 │       │
-│       ├── domain/             # Pure domain entities, value objects, enums
-│       │   ├── __init__.py
+│       ├── domain/             # Pure domain entities, value objects, enums  [IMPLEMENTED — CP2]
+│       │   ├── __init__.py     # Public domain surface
+│       │   ├── base.py         # Frozen DomainModel base & shared value types
+│       │   ├── errors.py       # Structured domain errors (no transport concerns)
+│       │   ├── identifiers.py  # Strongly typed entity identifiers
 │       │   ├── enums.py        # Statuses, Roles, Capabilities, EvidenceTypes
+│       │   ├── actor.py        # Actor identity & capability matching
 │       │   ├── feature.py      # Feature & Scope models
 │       │   ├── plan.py         # FeaturePlan & TaskDefinition models
-│       │   ├── task.py         # Task & TaskRevision models
-│       │   ├── work_package.py # WorkPackage & Claim models
+│       │   ├── task.py         # Task, TaskRevision & TaskRevisionHistory models
+│       │   ├── work_package.py # WorkPackage, Claim & VerificationGuide models
 │       │   ├── evidence.py     # EvidenceRecord models
-│       │   ├── qa.py           # QAReport & QADefect models
-│       │   └── decision.py     # Decision & Acknowledgement models
+│       │   ├── qa.py           # QAReport, QADefect & TestResult models
+│       │   └── decision.py     # Decision, Acknowledgement & ReviewDecision models
 │       │
-│       ├── state/              # State machines & transition definitions
+│       ├── state/              # State machines & transition definitions      [IMPLEMENTED — CP2]
 │       │   ├── __init__.py
-│       │   ├── machine.py      # Base state machine evaluator
-│       │   ├── feature_sm.py   # Feature lifecycle graph & guards
-│       │   ├── task_sm.py      # Task lifecycle graph & guards
-│       │   └── plan_sm.py      # Plan lifecycle graph & guards
+│       │   ├── machine.py      # Generic state machine & transition evaluator
+│       │   ├── feature_sm.py   # Feature lifecycle graph (§5.1)
+│       │   ├── plan_sm.py      # Feature Plan lifecycle graph (§5.4)
+│       │   ├── task_sm.py      # Task lifecycle graph (§5.2)
+│       │   └── work_package_sm.py # Work Package lifecycle graph (§5.3)
 │       │
-│       ├── rules/              # Rule validation engine & policy rules
+│       ├── rules/              # Rule validation engine & policy rules        [PLANNED — CP3]
 │       │   ├── __init__.py
 │       │   ├── engine.py       # Rule execution pipeline
 │       │   ├── base.py         # Abstract rule class
@@ -682,37 +755,37 @@ AI-Engineering-OS/
 │       │   ├── evidence.py     # Mandatory System/Worker evidence checks
 │       │   └── acceptance.py   # QA Final Pass & blocker checks
 │       │
-│       ├── core/               # OS kernel & transactional coordinator
+│       ├── core/               # OS kernel & transactional coordinator        [PLANNED — CP6]
 │       │   ├── __init__.py
 │       │   ├── kernel.py       # Central OS Kernel coordinator
 │       │   ├── transition.py   # Transactional state transition runner
 │       │   └── context.py      # Execution & actor context
 │       │
-│       ├── events/             # Event model & notification bus
+│       ├── events/             # Event model & notification bus               [PLANNED — CP5]
 │       │   ├── __init__.py
 │       │   ├── types.py        # Domain event schemas
 │       │   ├── bus.py          # PostgreSQL LISTEN/NOTIFY bus
 │       │   └── listener.py     # Async event listener runner
 │       │
 │       ├── storage/            # Persistence & data access
-│       │   ├── __init__.py
-│       │   ├── database.py     # SQLAlchemy engine & sessionmaker
+│       │   ├── __init__.py                                          [IMPLEMENTED — CP1]
+│       │   ├── database.py     # SQLAlchemy engine & sessionmaker    [IMPLEMENTED — CP1]
 │       │   ├── models/         # SQLAlchemy ORM table definitions
-│       │   │   ├── __init__.py
-│       │   │   ├── feature.py
-│       │   │   ├── task.py
-│       │   │   ├── work_package.py
-│       │   │   ├── evidence.py
-│       │   │   ├── qa.py
-│       │   │   ├── decision.py
-│       │   │   └── event.py
-│       │   └── repositories/   # Entity repositories & query helpers
+│       │   │   ├── __init__.py # Declarative Base re-export          [IMPLEMENTED — CP1]
+│       │   │   ├── feature.py                                       [PLANNED — CP4]
+│       │   │   ├── task.py                                          [PLANNED — CP4]
+│       │   │   ├── work_package.py                                  [PLANNED — CP4]
+│       │   │   ├── evidence.py                                      [PLANNED — CP4]
+│       │   │   ├── qa.py                                            [PLANNED — CP4]
+│       │   │   ├── decision.py                                      [PLANNED — CP4]
+│       │   │   └── event.py                                         [PLANNED — CP4]
+│       │   └── repositories/   # Entity repositories & query helpers [PLANNED — CP4]
 │       │       ├── __init__.py
 │       │       ├── feature_repo.py
 │       │       ├── task_repo.py
 │       │       └── event_repo.py
 │       │
-│       ├── api/                # FastAPI HTTP REST control plane
+│       ├── api/                # FastAPI HTTP REST control plane              [PLANNED — CP7]
 │       │   ├── __init__.py
 │       │   ├── dependencies.py # Actor context & DB session injection
 │       │   ├── schemas/        # Request & response DTOs
@@ -726,21 +799,27 @@ AI-Engineering-OS/
 │       │       ├── qa.py       # QA report & finding submissions
 │       │       └── decisions.py# Decision recording & acknowledgements
 │       │
-│       └── client/             # Typed Python SDK for agents & tools
+│       └── client/             # Typed Python SDK for agents & tools          [PLANNED — CP8]
 │           ├── __init__.py
 │           └── client.py
 │
 └── tests/
-    ├── conftest.py             # Pytest fixtures, test DB, async client
+    ├── conftest.py             # Pytest fixtures, domain fixtures, test DB, async client  [IMPLEMENTED — CP1/CP2]
     ├── unit/
-    │   ├── test_domain_models.py
-    │   ├── test_state_machines.py
-    │   └── test_rule_engine.py
+    │   ├── test_config.py             # Settings & environment          [IMPLEMENTED — CP1]
+    │   ├── test_domain_models.py      # Domain invariants & validation  [IMPLEMENTED — CP2]
+    │   ├── test_domain_immutability.py # Additive history & immutability [IMPLEMENTED — CP2]
+    │   ├── test_domain_isolation.py   # Domain/state layer purity       [IMPLEMENTED — CP2]
+    │   ├── test_state_machines.py     # Lifecycle transitions & authority [IMPLEMENTED — CP2]
+    │   └── test_rule_engine.py                                          [PLANNED — CP3]
     ├── integration/
-    │   ├── test_persistence.py
-    │   ├── test_events_listen_notify.py
-    │   └── test_os_transition_enforcement.py
-    └── e2e/
+    │   ├── test_health.py             # Application health endpoint     [IMPLEMENTED — CP1]
+    │   ├── test_database.py           # PostgreSQL connectivity         [IMPLEMENTED — CP1]
+    │   ├── test_migrations.py         # Alembic baseline migration      [IMPLEMENTED — CP1]
+    │   ├── test_persistence.py                                         [PLANNED — CP4]
+    │   ├── test_events_listen_notify.py                                [PLANNED — CP5]
+    │   └── test_os_transition_enforcement.py                           [PLANNED — CP6]
+    └── e2e/                                                            [PLANNED — CP8]
         └── test_first_vertical_slice.py
 ```
 
@@ -750,6 +829,7 @@ AI-Engineering-OS/
 - `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details.
 - `src/ai_engineering_os/api`: Provides clean HTTP contract without business logic pollution.
 - `tests/`: Separated into `unit`, `integration`, and `e2e` for fast local feedback loops.
+- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. It is synchronized with the repository at the end of Checkpoint 2 and must be re-synchronized as later checkpoints land.
 
 ---
 
@@ -812,6 +892,26 @@ The following are genuine technical implementation questions for Foundation v1 (
    - *Question:* How should actor identities be passed during local development and testing?
    - *Recommendation for v1:* Use HTTP headers (`X-Actor-ID`, `X-Actor-Role`, `X-Domain-ID`) resolved via FastAPI dependency injection, with a configurable authentication middleware hook for future token-based auth.
 
+### 14.1 Unresolved Questions Carried Forward (ADR-003)
+
+The following were surfaced during Checkpoint 2 and are **explicitly unresolved**. They must not be silently decided during implementation.
+
+5. **In-Scope Defect Identification — UNRESOLVED. Must be resolved before Checkpoint 3.**
+   - *Problem:* Design Session 009 gates Feature Acceptance on "zero unresolved **in-scope** defects", but `QADefect` (§4.1 #7) carries no in-scope marker, and `Feature.in_scope` is a free-text list a defect cannot be mechanically matched against.
+   - *Consequence:* The `QAInScopeZeroDefectRule` named in §15 Checkpoint 3 cannot be written deterministically until this is resolved.
+6. **Escalation Blocking / `BLOCKED` State — DEFERRED. Must be designed explicitly before implementation.**
+   - *Requirement:* Design Session 008 requires the OS to prevent affected Workers continuing knowingly invalid work after an Orchestrator decision, while preserving the current work.
+   - *Status:* Deferred from Foundation v1 (ADR-003 3.3). Not implemented, and knowingly unserved in v1. Entry states, exit states, and initiating authority must all be designed before any implementation.
+7. **Coordinator Lifecycle, Domain Registry, and Builder-Approval Registration — DEFERRED. Must be resolved before the Domain Registry is implemented.**
+   - *Requirement:* Design Session 009 defines the Coordinator lifecycle (`PROPOSED -> APPROVED -> ACTIVE -> SUSPENDED -> RETIRED`), the authoritative Domain Registry, and a Builder-approval gate before a Coordinator becomes `ACTIVE`.
+   - *Status:* Deferred from Foundation v1 (ADR-003 3.10), which uses `Actor.is_active` only. **This is an explicit deferral, not a rejection.** No `coordinators` or Domain Registry persistence may be created until it is resolved.
+8. **Task Instantiation Timing — UNRESOLVED. Must be resolved before Checkpoint 6.**
+   - *Problem:* Design Session 007 states the Coordinator creates Tasks only when their dependencies are satisfied and that Tasks are not created speculatively. §5.1 requires Tasks to be instantiated at `PLANNED -> IN_PROGRESS`, with §5.2 providing `PENDING_DEPENDENCIES` to park them. These describe different instantiation timings.
+9. **Post-Supersession Routing — UNRESOLVED. Relevant to Checkpoint 6.**
+   - *Problem:* Design Session 009 does not state what happens to a Feature when its plan is superseded, or how the successor plan revision is instantiated.
+10. **QA Severity / Priority Taxonomy — DEFERRED.**
+   - *Status:* Design Session 004 explicitly leaves the classification system open. `severity` and `priority` remain free-text labels (ADR-003 3.6). No taxonomy is required by Foundation v1.
+
 ---
 
 ## 15. Implementation Checkpoints
@@ -825,13 +925,18 @@ The following are genuine technical implementation questions for Foundation v1 (
 - Implement pure domain models in `src/ai_engineering_os/domain/`.
 - Implement state machine graphs and transition precondition evaluators in `src/ai_engineering_os/state/`.
 - Write comprehensive unit tests verifying valid and invalid transitions.
+- **[ADR-003](../../adr/ADR-003.md) is authoritative for the Foundation v1 domain-model and lifecycle clarifications discovered during this checkpoint.**
 
 ### Checkpoint 3: Rule & Policy Engine
 - Implement `RuleEngine` and composable rule evaluators in `src/ai_engineering_os/rules/`.
 - Implement `AuthorityRule`, `SystemEvidenceRule`, `SequentialDependencyRule`, and `QAInScopeZeroDefectRule`.
+- **`SystemEvidenceRule` must be keyed off `Task.capability` (ADR-003 3.7), not off `claim_type`.** Design Session 005 defines Evidence Standards per Worker type.
+- **Precondition:** §14 item 5 (in-scope defect identification) must be resolved before `QAInScopeZeroDefectRule` can be implemented deterministically.
 - Write unit tests verifying rule evaluation failures and success messages.
 
 ### Checkpoint 4: Database Persistence & Migrations
+- **Precondition:** §14 item 7 (Coordinator lifecycle) must be resolved before any `coordinators` or Domain Registry table is created.
+- **Constraint:** Append-only tables are insert-only (§7.1). `task_revisions` must have no mutable status column.
 - Implement SQLAlchemy ORM models in `src/ai_engineering_os/storage/models/`.
 - Generate and apply baseline Alembic migration script.
 - Implement repository classes (`FeatureRepository`, `TaskRepository`, `EventRepository`).
@@ -843,6 +948,7 @@ The following are genuine technical implementation questions for Foundation v1 (
 - Write integration tests for event persistence and notification wake-up.
 
 ### Checkpoint 6: OS Kernel & Transactional Transition Runner
+- **Precondition:** §14 item 8 (Task instantiation timing) must be resolved before the transition runner is implemented.
 - Implement `OSKernel` and `TransitionRunner` in `src/ai_engineering_os/core/`.
 - Wire state machine checks, rule engine evaluations, database mutations, and event publications into single atomic transactions.
 - Write integration tests verifying transition enforcement and rejection audit logging.
