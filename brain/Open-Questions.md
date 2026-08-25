@@ -81,47 +81,19 @@ The mechanism for providing the Orchestrator with the appropriate organizational
 
 This will be addressed in a future checkpoint.
 
-### Does a QA defect need an explicit in-scope marker?
+### What happens to a Feature's own status when its Feature Plan is superseded?
 
-Status: Open
+Status: Open. Narrowed 2026-08-25.
 
-Source: [ADR-003](../adr/ADR-003.md), Questions Explicitly Not Decided Here (1).
-
-Notes:
-
-Design Session 009 gates Feature Acceptance on "zero unresolved in-scope defects".
-
-QADefect carries no in-scope marker, and Feature.in_scope is free text that a defect cannot be mechanically matched against.
-
-The Checkpoint 3 QAInScopeZeroDefectRule cannot be written deterministically until this is resolved.
-
-Must be resolved before Checkpoint 3.
-
-### When are Tasks instantiated in the OS?
-
-Status: Open
-
-Source: [ADR-003](../adr/ADR-003.md), Questions Explicitly Not Decided Here (2).
+Source: [ADR-003](../adr/ADR-003.md) 3.13, and Questions Not Decided In The Checkpoint 2 Record (3).
 
 Notes:
 
-Design Session 007 states the Coordinator creates Tasks only when their dependencies are satisfied, and that Tasks are not created simply because they may be needed later.
+ADR-003 3.13 resolved the routing of a superseded Feature Plan and its Tasks. See Resolution Notes.
 
-The Implementation Blueprint requires Tasks to be instantiated at plan activation, with PENDING_DEPENDENCIES available to park them.
+It did not decide what happens to the Feature's own lifecycle status when its plan is superseded, or how the successor plan revision is instantiated.
 
-These describe different instantiation timings.
-
-Must be resolved before Checkpoint 6.
-
-### What happens to a Feature when its Feature Plan is superseded?
-
-Status: Open
-
-Source: [ADR-003](../adr/ADR-003.md), Questions Explicitly Not Decided Here (3).
-
-Notes:
-
-Design Session 009 does not state what happens to the Feature when its plan is superseded, or how the successor plan revision is instantiated.
+Design Session 009 is silent on both.
 
 Relevant to Checkpoint 6.
 
@@ -138,7 +110,48 @@ These remain part of the architecture of record. They are not implemented in Fou
 - D-3: Domain Registry and the Builder-approval registration workflow (Design Session 009). Same gate as D-2.
 - D-4: Feature Plan supersession from DRAFT or READY. Not required by Foundation v1.
 - D-5: QA severity and priority classification taxonomy (Design Session 004). Not required by Foundation v1.
+- D-6: Task stop and abandon lifecycle, and the persisted record of a Coordinator disposition decision, including any recorded relationship between a superseded plan's Task and successor planned work (ADR-003 3.13). Must be designed explicitly before any post-supersession disposition is implemented.
 
 ## Resolution Notes
 
-<!-- Placeholder -->
+Questions removed from the list above, with the decision that resolved each one.
+
+### Does a QA defect need an explicit in-scope marker?
+
+Status: Resolved 2026-08-25.
+
+Resolved by: [ADR-003](../adr/ADR-003.md) 3.11.
+
+Notes:
+
+No. A defect's scope is never declared by QA. It is derived by the OS from an explicit structural association: the defect references the Task it was found against, or the Feature directly when no Task represents the affected capability.
+
+The OS resolves Defect to Task to Feature, validates that the chain reaches the Feature under validation, and rejects any Feature Acceptance resting on a QA Final Pass that carries a defect whose scope cannot be resolved.
+
+The OS enforces the integrity of the relationship, not the judgement behind it. Feature.in_scope remains free text and is never text-matched against a defect.
+
+### When are Tasks instantiated in the OS?
+
+Status: Resolved 2026-08-25.
+
+Resolved by: [ADR-003](../adr/ADR-003.md) 3.12.
+
+Notes:
+
+Tasks may be created while the Feature Plan is still DRAFT. Existence confers no execution authority.
+
+Execution authorization derives from the originating Feature Plan reaching ACTIVE, and is enforced on the transition to READY.
+
+A Task existing is not a Task being authorized to execute. Design Session 007 is unchanged: its protection is preserved by the authorization gate rather than by delaying creation.
+
+### What happens to a Feature when its Feature Plan is superseded?
+
+Status: Resolved in part 2026-08-25. Residual question carried forward under Questions.
+
+Resolved by: [ADR-003](../adr/ADR-003.md) 3.13.
+
+Notes:
+
+Resolved for the Plan and its Tasks. The old Plan and its Tasks remain immutable history. Tasks are not moved, not deleted, and not automatically halted. The Coordinator explicitly decides the disposition of each unfinished Task: resume, reuse, abandon, or redirect. Useful work may be represented as new planned work in the successor plan. No automatic migration mechanism exists or may be built.
+
+Not resolved for the Feature itself. See "What happens to a Feature's own status when its Feature Plan is superseded?" under Questions.

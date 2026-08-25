@@ -195,12 +195,14 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 - **Identity:** `id` (UUID), `feature_id` (UUID), `revision_number` (int).
 - **Core Attributes:** `status` (`PlanStatus`), `required_capabilities` (list, e.g., `["backend", "frontend", "qa"]`), `task_definitions` (list of `TaskDefinition`: `key`, `title`, `capability`, `depends_on`), `created_by` (UUID), `created_at`.
 - **Relationship:** Belongs to one Feature; defines planned Tasks.
-- **Task Definition Keys (ADR-003 3.8):** `key` is a **plan-local** slug and `depends_on` references other plan-local keys. Dependencies cannot reference OS `TaskId` values because Task identities do not exist at planning time, and Design Session 007 requires Tasks to be created dependency-driven rather than speculatively. A plan's key set must be unique, fully resolvable, and acyclic.
+- **Task Definition Keys (ADR-003 3.8):** `key` is a **plan-local** slug and `depends_on` references other plan-local keys. Dependencies cannot reference OS `TaskId` values because Task identities do not exist at planning time. A plan's key set must be unique, fully resolvable, and acyclic.
+- **Planning-Time Task Creation (ADR-003 3.12):** Tasks **may be created from these definitions while the plan is still `DRAFT`**. The definition list remains the planning record and is not rewritten when Tasks appear; each created Task records the definition `key` it came from (§4.1 #3). Creating a Task confers no execution authority — see §5.2 and §5.4.
 
 #### 3. Task
 - **Identity:** `id` (UUID), `feature_id` (UUID), `title` (string).
-- **Core Attributes:** `capability` (`CapabilityType`: `BACKEND`, `FRONTEND`, `QA`, etc.), `status` (`TaskStatus`), `assigned_worker_id` (UUID, optional), `dependencies` (list of prerequisite Task UUIDs), `active_revision_number` (int), `created_at`, `updated_at`.
-- **Relationship:** Belongs to one Feature; owns 1..* Task Revisions.
+- **Core Attributes:** `capability` (`CapabilityType`: `BACKEND`, `FRONTEND`, `QA`, etc.), `status` (`TaskStatus`), `assigned_worker_id` (UUID, optional), `dependencies` (list of prerequisite Task UUIDs), `active_revision_number` (int), `feature_plan_id` (UUID), `plan_definition_key` (plan-local slug, §4.1 #2), `created_at`, `updated_at`.
+- **Relationship:** Belongs to one Feature; originates from one Feature Plan definition; owns 1..* Task Revisions.
+- **Existence vs Execution Authorization (ADR-003 3.12):** A Task may exist while its originating Feature Plan is still `DRAFT`. **Existence confers no authority to execute.** Execution authorization derives from the originating plan being `ACTIVE` and is enforced on the `-> READY` transition (§5.2). `feature_plan_id` and `plan_definition_key` exist so the OS can evaluate that precondition and so planning history stays traceable; without them the §5.2 rule is unenforceable.
 
 #### 4. Task Revision
 - **Identity:** `id` (UUID), `task_id` (UUID), `revision_number` (int).
@@ -224,10 +226,12 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 #### 7. QA Report & QA Defect
 - **Identity:** `id` (UUID), `feature_id` (UUID), `task_revision_id` (UUID, optional).
-- **Core Attributes:** `is_final_pass` (bool), `tested_scope` (list), `results` (list of `TestResult`: `name`, `passed`, `details`), `defects` (list of `QADefect`: `id`, `title`, `severity`, `priority`, `is_blocker`, `status`), `evidence_ids` (list of Evidence UUIDs), `status` (`QAStatus`: `PASSED`, `FAILED`, `BLOCKED`), `created_at`.
+- **Core Attributes:** `is_final_pass` (bool), `tested_scope` (list), `results` (list of `TestResult`: `name`, `passed`, `details`), `defects` (list of `QADefect`: `id`, `title`, `severity`, `priority`, `is_blocker`, `status`, `scope_task_id` (UUID, optional), `scope_feature_id` (UUID, optional)), `evidence_ids` (list of Evidence UUIDs), `status` (`QAStatus`: `PASSED`, `FAILED`, `BLOCKED`), `created_at`.
 - **Defect Status (ADR-003 3.6):** `status` is `DefectStatus`: `OPEN` / `RESOLVED`. This is the minimum vocabulary that makes Design Session 009's "zero unresolved in-scope defects" machine-computable.
 - **Severity & Priority (ADR-003 3.6):** `severity` and `priority` remain **non-empty free-text labels**. Design Session 004 explicitly leaves the classification system open, and no taxonomy is introduced here. They feed Coordinator remediation prioritisation, which is agent judgement rather than deterministic OS enforcement.
-- **Open Question — In-Scope Defect Identification:** `QADefect` carries no in-scope marker, so "zero unresolved **in-scope** defects" is not yet deterministically enforceable. See §14, item 5. **Unresolved.**
+- **Defect Scope (ADR-003 3.11):** A defect's acceptance impact is **derived by the OS from an explicit structural association**. The OS **never** accepts an `in_scope` boolean from QA. Every defect references either the **Task** it was found against (`scope_task_id`) or the **Feature** directly (`scope_feature_id`) when no Task represents the affected capability. The OS resolves `Defect -> Task -> Feature`, or `Defect -> Feature`, and validates that the referenced entity exists and resolves to the Feature under validation. A defect resolving to a different Feature is permanently recorded and does not block this Feature's acceptance.
+- **QA Final Pass Validity (ADR-003 3.11):** If the association is absent, resolves to no entity, or resolves to a different Feature than the report's, the defect's scope is **unresolved** and the OS does not guess. A report with `is_final_pass = true` carrying any scope-unresolved defect is **not a valid QA Final Pass**; a Feature Acceptance relying on it is rejected with an explicit reason naming the defect (§5.1). Resolution comes from QA supplying a valid association, never from OS inference.
+- **Scope Boundary (ADR-003 3.11):** The OS enforces the **integrity of the relationship**, not the semantic correctness of the judgement behind it. `Feature.in_scope` / `out_of_scope` remain free-text (Design Session 009) and the OS performs **no** text matching against them. Which Task or Feature a defect belongs to remains QA judgement, resolvable by the Coordinator under the Design Session 009 disagreement path.
 
 #### 8. Decision & Decision Acknowledgement
 - **Identity:** `id` (UUID), `scope` (`DECISION_SCOPE`: `FEATURE`, `SYSTEM`, `BUSINESS`).
@@ -286,9 +290,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | From State | To State | Requester Role | OS Validation Requirements | Rejection Triggers |
 | :--- | :--- | :--- | :--- | :--- |
 | `DRAFT` | `PLANNED` | `COORDINATOR` | Valid Feature Plan attached with at least one task definition. | Missing feature plan or empty task list. |
-| `PLANNED` | `IN_PROGRESS` | `COORDINATOR` | Plan is in `READY` status; tasks are instantiated in OS. | Plan is incomplete or invalid dependencies exist. |
+| `PLANNED` | `IN_PROGRESS` | `COORDINATOR` | Plan transitions `READY` -> `ACTIVE` (§5.4). Activation instantiates any task definition that has no Task yet and **authorizes** the plan's Tasks (ADR-003 3.12). | Plan is incomplete or invalid dependencies exist. |
 | `IN_PROGRESS` | `IN_VALIDATION` | `COORDINATOR` / `OS` | All implementation tasks have reached `ACCEPTED` status from Reviewer. | Any implementation task is still in progress or rejected. |
-| `IN_VALIDATION` | `ACCEPTED` | `COORDINATOR` | 1. All tasks completed.<br>2. Valid `QA Final Pass` exists.<br>3. Zero unresolved in-scope defects.<br>4. Mandatory evidence attached. | Missing QA Final Pass, unresolved blocker, or incomplete task. |
+| `IN_VALIDATION` | `ACCEPTED` | `COORDINATOR` | 1. All tasks completed.<br>2. Valid `QA Final Pass` exists.<br>3. Zero unresolved defects whose scope resolves to this Feature via `Defect -> Task -> Feature` (ADR-003 3.11).<br>4. Mandatory evidence attached. | Missing QA Final Pass, unresolved blocker, incomplete task, or a defect on the QA Final Pass whose scope cannot be resolved. |
 | `IN_VALIDATION` | `IN_PROGRESS` | `COORDINATOR` / `QA` | QA Report indicates failure or defects requiring new worker tasks. | Transition requested without valid defect findings. |
 
 ---
@@ -347,7 +351,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | From State | To State | Requester Role | OS Validation Requirements | Rejection Triggers |
 | :--- | :--- | :--- | :--- | :--- |
 | `CREATED` | `PENDING_DEPENDENCIES` | `OS` | Task has prerequisite task IDs. | No dependencies declared. |
-| `CREATED` / `PENDING_` | `READY` | `OS` | All declared prerequisite task IDs are in `ACCEPTED` state. | Prerequisite task is not `ACCEPTED`. |
+| `CREATED` / `PENDING_` | `READY` | `OS` | 1. Originating Feature Plan is `ACTIVE` (ADR-003 3.12).<br>2. All declared prerequisite task IDs are in `ACCEPTED` state. | Originating Feature Plan is not `ACTIVE`, or a prerequisite task is not `ACCEPTED`. |
 | `READY` | `ASSIGNED` | `COORDINATOR` | Worker ID is active and possesses matching capability. | Worker inactive, nonexistent, or wrong capability. |
 | `ASSIGNED` | `IN_PROGRESS` | `WORKER` | Requester matches `assigned_worker_id`. | Requester is not assigned worker. |
 | `IN_PROGRESS` | `SUBMITTED` | `WORKER` | 1. Work Package present.<br>2. Claims defined.<br>3. Mandatory System Evidence attached.<br>4. Verification guide present. | Missing System Evidence, empty claims, or missing verification guide. |
@@ -360,6 +364,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 > [!NOTE]
 > **No `BLOCKED` state in Foundation v1 (ADR-003 3.3).** The Task lifecycle above is complete and intentionally defines no `BLOCKED` state. Design Session 008 requires that the OS prevent affected Workers continuing knowingly invalid work after an Orchestrator decision; that capability is **deferred** from Foundation v1 and is knowingly unserved (see §14, item 6). The `BLOCKED` reference in the §6 event table is a forward reference to that future capability, not a Foundation v1 state.
+
+> [!NOTE]
+> **Task existence is not execution authority (ADR-003 3.12).** A Task may be created while its Feature Plan is still `DRAFT`. Such a Task rests in `CREATED` or `PENDING_DEPENDENCIES` — legitimate resting states for planned-but-unauthorized work, not states that imply imminent execution. It becomes executable only once its originating Feature Plan is `ACTIVE`, enforced on the `-> READY` edge above and nowhere else. **"A Task exists" is not "a Task is authorized to execute."**
 
 ---
 
@@ -399,13 +406,32 @@ DRAFT ──→ READY ──→ ACTIVE ──→ COMPLETED
 | From State | To State | Requester Role | Notes |
 | :--- | :--- | :--- | :--- |
 | `DRAFT` | `READY` | `COORDINATOR` | The Coordinator owns the Feature Plan (Design Session 009). |
-| `READY` | `ACTIVE` | `COORDINATOR` | Activation instantiates Tasks; dependency-free tasks move to `READY`. |
+| `READY` | `ACTIVE` | `COORDINATOR` | Activation is the **authorization boundary** (ADR-003 3.12): it instantiates any task definition that has no Task yet, authorizes the plan's Tasks, and dependency-free Tasks move to `READY`. |
 | `ACTIVE` | `COMPLETED` | `COORDINATOR` / `OS` | `OS` only when completion is deterministically derived from prerequisites, mirroring §5.1 `IN_PROGRESS` -> `IN_VALIDATION`. |
 | `ACTIVE` | `SUPERSEDED` | `COORDINATOR` | A plan revision supersedes the active plan rather than silently overwriting it (Design Session 009). |
 
 - **Terminal States:** `COMPLETED` and `SUPERSEDED`.
 - **Deferred (ADR-003 3.4):** `DRAFT -> SUPERSEDED` and `READY -> SUPERSEDED` are **not** permitted in Foundation v1.
-- **Open Question — Post-Supersession Routing:** Design Session 009 does not state what happens to the Feature when its plan is superseded, or how the successor plan revision is instantiated. See §14, item 8. **Unresolved.**
+- **Planning-Time Task Creation (ADR-003 3.12):** Tasks may be created against a `DRAFT` plan. They carry no execution authority until this plan reaches `ACTIVE` (§4.1 #3, §5.2).
+
+#### Supersession & Disposition of Unfinished Work (ADR-003 3.13)
+
+When a Feature Plan transitions `ACTIVE` -> `SUPERSEDED`, **the OS performs no automatic routing whatsoever**:
+
+- The superseded Plan and its Tasks remain **immutable history**.
+- Existing Tasks are **not** moved to the successor plan.
+- Existing Tasks are **not** deleted.
+- The OS **does not decide** what happens to unfinished work.
+
+The **Coordinator explicitly decides the disposition of each unfinished Task**, using the vocabulary Design Session 008 already established for work invalidated by a higher-level decision: **resume, reuse, abandon, or redirect**. Useful work may be **represented** as new planned work in the successor plan; it is never migrated. **No automatic migration mechanism exists or may be implemented.**
+
+Two consequences follow without any new mechanism:
+
+1. A Task of the superseded plan that had not yet reached `READY` **simply never becomes authorized** — the §5.2 precondition declines to fire. This is the OS not acting, not the OS deciding; the Task waits for Coordinator disposition.
+2. A Task already in execution is **not interrupted by the OS**; it continues under its own lifecycle until the Coordinator dispositions it. **Foundation v1 has no mechanism to halt in-flight work** — see §14, item 6 (`BLOCKED`, deferred).
+
+- **Deferred (D-6):** the persisted record of a disposition decision, any recorded relationship between a superseded plan's Task and successor planned work, and any terminal state for stopped work. See §14, item 11.
+- **Open Question — Feature-Level Consequence:** Design Session 009 does not state what happens to the **Feature's own lifecycle status** when its plan is superseded, or how the successor plan revision is instantiated. ADR-003 3.13 resolves the routing of the Plan and its Tasks but **does not decide this**. See §14, item 9. **Unresolved.**
 
 ---
 
@@ -432,7 +458,7 @@ Every significant OS action generates a structured domain event persisted synchr
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `FeatureCreated` | Builder / Orchestrator | Coordinator | Yes (`DRAFT`) | Coordinator | Feature intent, requirements, and scope registered. |
 | `FeaturePlanCreated` | Coordinator | OS / Coordinator | Yes (`PLANNED`) | OS | Feature Plan drafted with initial task definitions. |
-| `FeaturePlanActivated`| Coordinator | OS / Workers | Yes (`IN_PROGRESS`) | Workers | Plan activated; dependency-free tasks move to `READY`. |
+| `FeaturePlanActivated`| Coordinator | OS / Workers | Yes (`IN_PROGRESS`) | Workers | Plan activated; the plan's Tasks become authorized (ADR-003 3.12) and dependency-free tasks move to `READY`. |
 | `TaskAssigned` | Coordinator | Worker | Yes (`ASSIGNED`) | Assigned Worker | Task assigned to specific technical worker. |
 | `TaskStarted` | Worker | OS / Coordinator | Yes (`IN_PROGRESS`) | Coordinator | Worker acknowledges and begins exploration/coding. |
 | `WorkPackageSubmitted`| Worker | OS / Reviewer | Yes (`SUBMITTED`) | OS / Reviewer | Worker submits completed revision and evidence. |
@@ -650,8 +676,10 @@ Step 3: Feature Creation
         Status: DRAFT.
 
 Step 4: Feature Plan Creation & Activation
-        Coordinator drafts Feature Plan with Task 1: "Implement Auth API".
-        Plan activated -> Task 1 created in READY status.
+        Coordinator drafts Feature Plan defining Task 1: "Implement Auth API".
+        Task 1 may exist as planned work while the Plan is DRAFT (CREATED status,
+        no execution authority - ADR-003 3.12).
+        Plan READY -> ACTIVE -> Task 1 is authorized and moves to READY status.
 
 Step 5: Task Assignment & Start
         Coordinator assigns Task 1 to Worker "backend-worker-1".
@@ -892,25 +920,32 @@ The following are genuine technical implementation questions for Foundation v1 (
    - *Question:* How should actor identities be passed during local development and testing?
    - *Recommendation for v1:* Use HTTP headers (`X-Actor-ID`, `X-Actor-Role`, `X-Domain-ID`) resolved via FastAPI dependency injection, with a configurable authentication middleware hook for future token-based auth.
 
-### 14.1 Unresolved Questions Carried Forward (ADR-003)
+### 14.1 Questions Carried Forward From ADR-003
 
-The following were surfaced during Checkpoint 2 and are **explicitly unresolved**. They must not be silently decided during implementation.
+The following were surfaced during Checkpoint 2. Item numbering is stable and is referenced from §4, §5, and §15. Items still marked UNRESOLVED or DEFERRED **must not be silently decided during implementation**.
 
-5. **In-Scope Defect Identification — UNRESOLVED. Must be resolved before Checkpoint 3.**
-   - *Problem:* Design Session 009 gates Feature Acceptance on "zero unresolved **in-scope** defects", but `QADefect` (§4.1 #7) carries no in-scope marker, and `Feature.in_scope` is a free-text list a defect cannot be mechanically matched against.
-   - *Consequence:* The `QAInScopeZeroDefectRule` named in §15 Checkpoint 3 cannot be written deterministically until this is resolved.
+5. **In-Scope Defect Identification — RESOLVED 2026-08-25 (ADR-003 3.11).**
+   - *Problem (as recorded):* Design Session 009 gates Feature Acceptance on "zero unresolved **in-scope** defects", but `QADefect` (§4.1 #7) carries no in-scope marker, and `Feature.in_scope` is a free-text list a defect cannot be mechanically matched against.
+   - *Ruling:* Scope is **derived by the OS from a validated structural association** (`Defect -> Task -> Feature`, or `Defect -> Feature`), never from a QA-supplied boolean. A scope-unresolved defect invalidates a QA Final Pass. The OS validates the relationship, not the judgement behind it. See §4.1 #7 and §5.1.
+   - *Consequence:* `QAInScopeZeroDefectRule` (§15 Checkpoint 3) can now be written deterministically, and `QADefect` gains scope-association fields.
 6. **Escalation Blocking / `BLOCKED` State — DEFERRED. Must be designed explicitly before implementation.**
    - *Requirement:* Design Session 008 requires the OS to prevent affected Workers continuing knowingly invalid work after an Orchestrator decision, while preserving the current work.
    - *Status:* Deferred from Foundation v1 (ADR-003 3.3). Not implemented, and knowingly unserved in v1. Entry states, exit states, and initiating authority must all be designed before any implementation.
 7. **Coordinator Lifecycle, Domain Registry, and Builder-Approval Registration — DEFERRED. Must be resolved before the Domain Registry is implemented.**
    - *Requirement:* Design Session 009 defines the Coordinator lifecycle (`PROPOSED -> APPROVED -> ACTIVE -> SUSPENDED -> RETIRED`), the authoritative Domain Registry, and a Builder-approval gate before a Coordinator becomes `ACTIVE`.
    - *Status:* Deferred from Foundation v1 (ADR-003 3.10), which uses `Actor.is_active` only. **This is an explicit deferral, not a rejection.** No `coordinators` or Domain Registry persistence may be created until it is resolved.
-8. **Task Instantiation Timing — UNRESOLVED. Must be resolved before Checkpoint 6.**
-   - *Problem:* Design Session 007 states the Coordinator creates Tasks only when their dependencies are satisfied and that Tasks are not created speculatively. §5.1 requires Tasks to be instantiated at `PLANNED -> IN_PROGRESS`, with §5.2 providing `PENDING_DEPENDENCIES` to park them. These describe different instantiation timings.
-9. **Post-Supersession Routing — UNRESOLVED. Relevant to Checkpoint 6.**
-   - *Problem:* Design Session 009 does not state what happens to a Feature when its plan is superseded, or how the successor plan revision is instantiated.
+8. **Task Instantiation Timing — RESOLVED 2026-08-25 (ADR-003 3.12).**
+   - *Problem (as recorded):* Design Session 007 states the Coordinator creates Tasks only when their dependencies are satisfied and that Tasks are not created speculatively. §5.1 requires Tasks to be instantiated at `PLANNED -> IN_PROGRESS`, with §5.2 providing `PENDING_DEPENDENCIES` to park them. These describe different instantiation timings.
+   - *Ruling:* Tasks **may be created while the plan is `DRAFT`**; existence confers no execution authority. Authorization derives from the originating plan being `ACTIVE` and is enforced on `-> READY` (§5.2). Design Session 007's protection is preserved by the gate rather than by delaying creation. `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3).
+9. **Post-Supersession Routing — RESOLVED IN PART 2026-08-25 (ADR-003 3.13). Residual UNRESOLVED; relevant to Checkpoint 6.**
+   - *Problem (as recorded):* Design Session 009 does not state what happens to a Feature when its plan is superseded, or how the successor plan revision is instantiated.
+   - *Ruling (Plan and Tasks):* The OS performs **no automatic routing** — no migration, no deletion, no halting. The Coordinator explicitly dispositions each unfinished Task (resume / reuse / abandon / redirect, Design Session 008). Not-yet-authorized Tasks simply remain unauthorized; in-flight Tasks are not interrupted, because Foundation v1 has no halt mechanism (item 6). See §5.4.
+   - *Residual — UNRESOLVED:* what happens to the **Feature's own lifecycle status** when its plan is superseded, and how the successor plan revision is instantiated. ADR-003 3.13 explicitly does not decide this.
 10. **QA Severity / Priority Taxonomy — DEFERRED.**
    - *Status:* Design Session 004 explicitly leaves the classification system open. `severity` and `priority` remain free-text labels (ADR-003 3.6). No taxonomy is required by Foundation v1.
+11. **Task Stop / Abandon Lifecycle and Disposition Record — DEFERRED (ADR-003 D-6). Must be designed explicitly before any post-supersession disposition is implemented.**
+   - *Requirement:* ADR-003 3.13 allows work that is no longer required to be "stopped according to the eventual lifecycle rules", and leaves the Coordinator's disposition decision unrecorded.
+   - *Status:* The Task lifecycle (§5.2) defines **no** terminal state for stopped work, and no entity records a disposition decision or links a superseded plan's Task to successor planned work. Deferred from Foundation v1, not rejected. Relevant to Checkpoint 6.
 
 ---
 
@@ -926,17 +961,24 @@ The following were surfaced during Checkpoint 2 and are **explicitly unresolved*
 - Implement state machine graphs and transition precondition evaluators in `src/ai_engineering_os/state/`.
 - Write comprehensive unit tests verifying valid and invalid transitions.
 - **[ADR-003](../../adr/ADR-003.md) is authoritative for the Foundation v1 domain-model and lifecycle clarifications discovered during this checkpoint.**
+- **Checkpoint 2 revisit (ADR-003 3.11, 3.12) — performed when Checkpoint 3 begins, not inside Checkpoint 2's completed record:**
+  - `QADefect` gains its scope association (`scope_task_id` / `scope_feature_id`) and OS-side scope resolution (§4.1 #7).
+  - `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3).
+  - The Task state machine gains the originating-plan-`ACTIVE` precondition on `-> READY` (§5.2).
 
 ### Checkpoint 3: Rule & Policy Engine
 - Implement `RuleEngine` and composable rule evaluators in `src/ai_engineering_os/rules/`.
 - Implement `AuthorityRule`, `SystemEvidenceRule`, `SequentialDependencyRule`, and `QAInScopeZeroDefectRule`.
 - **`SystemEvidenceRule` must be keyed off `Task.capability` (ADR-003 3.7), not off `claim_type`.** Design Session 005 defines Evidence Standards per Worker type.
-- **Precondition:** §14 item 5 (in-scope defect identification) must be resolved before `QAInScopeZeroDefectRule` can be implemented deterministically.
+- **Precondition — CLEARED.** §14 item 5 (in-scope defect identification) is resolved by ADR-003 3.11.
+- **`QAInScopeZeroDefectRule` evaluates derived scope (ADR-003 3.11).** It resolves each defect via `Defect -> Task -> Feature` (or `Defect -> Feature`) and counts only unresolved defects resolving to the Feature under acceptance. It **must never read a QA-supplied `in_scope` flag**, and it must reject a QA Final Pass carrying any scope-unresolved defect, naming the defect in the rejection.
 - Write unit tests verifying rule evaluation failures and success messages.
 
 ### Checkpoint 4: Database Persistence & Migrations
 - **Precondition:** §14 item 7 (Coordinator lifecycle) must be resolved before any `coordinators` or Domain Registry table is created.
 - **Constraint:** Append-only tables are insert-only (§7.1). `task_revisions` must have no mutable status column.
+- **Constraint (ADR-003 3.12):** `tasks` carries the originating-plan columns (`feature_plan_id`, `plan_definition_key`); QA defect rows carry the scope-association columns (ADR-003 3.11).
+- **Constraint (ADR-003 3.13):** **No** automatic migration, reassignment, or deletion of a superseded plan's Tasks may be implemented in any repository or migration.
 - Implement SQLAlchemy ORM models in `src/ai_engineering_os/storage/models/`.
 - Generate and apply baseline Alembic migration script.
 - Implement repository classes (`FeatureRepository`, `TaskRepository`, `EventRepository`).
@@ -948,7 +990,9 @@ The following were surfaced during Checkpoint 2 and are **explicitly unresolved*
 - Write integration tests for event persistence and notification wake-up.
 
 ### Checkpoint 6: OS Kernel & Transactional Transition Runner
-- **Precondition:** §14 item 8 (Task instantiation timing) must be resolved before the transition runner is implemented.
+- **Precondition — CLEARED.** §14 item 8 (Task instantiation timing) is resolved by ADR-003 3.12. The transition runner enforces the originating-plan-`ACTIVE` precondition on `-> READY`, and plan activation reconciles task definitions to Tasks (§5.4).
+- **Constraint (ADR-003 3.13):** On `ACTIVE -> SUPERSEDED` the runner performs **no** automatic Task migration, deletion, or halting. Disposition is Coordinator-initiated; its persisted record and any stop state are deferred (§14, item 11).
+- **Open (§14, item 9):** the Feature-level consequence of supersession remains unresolved and must not be silently decided here.
 - Implement `OSKernel` and `TransitionRunner` in `src/ai_engineering_os/core/`.
 - Wire state machine checks, rule engine evaluations, database mutations, and event publications into single atomic transactions.
 - Write integration tests verifying transition enforcement and rejection audit logging.
