@@ -122,6 +122,44 @@ Three declared transition conditions cannot be evaluated deterministically becau
 
 All three are Foundation v1 required conditions under [ADR-004](../adr/ADR-004.md) 4.13, so all three block Checkpoint 6 under the safety gate of [ADR-004](../adr/ADR-004.md) 4.12.
 
+### Which QA report states a Feature's current defect position?
+
+Status: Open. Raised 2026-08-29 by the Checkpoint 3 audit.
+
+Source: [ADR-004](../adr/ADR-004.md) 4.15, and Implementation Blueprint section 14.3, item 18.
+
+Notes:
+
+QA Reports are immutable audit history. An OPEN defect written into a superseded report stays OPEN in that record forever, so treating every historical report as a live acceptance blocker would make any Feature that ever failed QA permanently unacceptable, and would render the Design Session 009 rework loop IN_VALIDATION to IN_PROGRESS to ACCEPTED unreachable.
+
+Nothing in the architecture identifies which QA Report states a Feature's current defect position.
+
+Checkpoint 3 does not decide this, and the rule layer does not attempt to. Selecting the authoritative result and evaluating it are separate concerns owned by separate components. The future OS Kernel and context loader select which QA result is authoritative; the Rule Engine evaluates whatever facts the RuleContext supplies and takes no view on how many reports it receives.
+
+Repeat QA is normal. A QA Report is scoped to a Task Revision, and the rework loop from IN_VALIDATION back to IN_PROGRESS produces more of them. Nothing in the approved architecture limits a Feature to one QA Report, so a rule that rejected a Feature merely because several reports were supplied would be inventing QA workflow semantics it does not own.
+
+Nothing may be invented before this is designed: no recency ordering, no sequence number, no timestamp comparison, no latest marker, no current_report_id, no QA session identity, no persistence query, and no additional RuleContext fact.
+
+Must be designed before Checkpoint 6, which owns the context loader that decides which QA Reports a rule sees.
+
+Known limitation while this stays open: the correctness of ZERO_UNRESOLVED_IN_SCOPE_DEFECTS depends entirely on the caller supplying the right reports. Checkpoint 3 proves the ADR-003 3.11 derivation, not the end-to-end acceptance guarantee. This is recorded as a limitation, not claimed as enforcement.
+
+### Can the OS verify that a defect's Feature association points at a real Feature?
+
+Status: Open. Raised 2026-08-29 by the Checkpoint 3 audit.
+
+Source: [ADR-004](../adr/ADR-004.md) 4.16, and Implementation Blueprint section 14.3, item 19.
+
+Notes:
+
+The approved seven-fact RuleContext supplies only the Feature under acceptance. An existing different Feature and a nonexistent Feature identifier are therefore indistinguishable to a rule, and both are treated as out of scope.
+
+No known_feature_ids fact was added and no lookup was invented. Checkpoint 3 does not claim to validate Feature-reference existence.
+
+A dangling Task association is detected, because the Task facts needed to check it are supplied. The asymmetry follows directly from the approved fact set rather than from an oversight.
+
+Must be addressed when the persistence and context-loader layer is designed, at Checkpoints 4 and 6. No gate is set on Checkpoint 3.
+
 ### Deferred capabilities recorded by ADR-003
 
 Status: Deferred, not rejected.
@@ -145,9 +183,11 @@ Questions removed from the list above, with the decision that resolved each one.
 
 ### Does a QA defect need an explicit in-scope marker?
 
-Status: Resolved 2026-08-25.
+Status: Resolved 2026-08-25. Amended 2026-08-29.
 
-Resolved by: [ADR-003](../adr/ADR-003.md) 3.11.
+Resolved by: [ADR-003](../adr/ADR-003.md) 3.11, amended 2026-08-29 by [ADR-004](../adr/ADR-004.md) 4.14.
+
+Amendment: as originally recorded, ADR-003 3.11 classified a different-Feature association both as unresolved scope and as non-blocking out-of-scope work. The Builder resolved the contradiction in favour of out-of-scope: a defect resolving to a different Feature does not block the Feature being accepted. Only genuinely unresolved scope blocks. The underlying answer below is unchanged.
 
 Notes:
 

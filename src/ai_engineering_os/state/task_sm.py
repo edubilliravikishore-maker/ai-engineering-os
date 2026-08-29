@@ -20,17 +20,30 @@ TASK_STATE_MACHINE: StateMachine[TaskStatus] = StateMachine(
             allowed_initiators=frozenset({SystemActor.OS}),
             required_conditions=frozenset({TransitionCondition.TASK_HAS_DEPENDENCIES}),
         ),
+        # ADR-003 3.12 / ADR-004 4.8: `-> READY` is the single execution
+        # authorization gate. The ORIGINATING_PLAN_ACTIVE *rule* is deferred to
+        # Checkpoint 6; the condition is declared here.
         TransitionDefinition(
             from_state=TaskStatus.CREATED,
             to_state=TaskStatus.READY,
             allowed_initiators=frozenset({SystemActor.OS}),
-            required_conditions=frozenset({TransitionCondition.DEPENDENCIES_ACCEPTED}),
+            required_conditions=frozenset(
+                {
+                    TransitionCondition.DEPENDENCIES_ACCEPTED,
+                    TransitionCondition.ORIGINATING_PLAN_ACTIVE,
+                }
+            ),
         ),
         TransitionDefinition(
             from_state=TaskStatus.PENDING_DEPENDENCIES,
             to_state=TaskStatus.READY,
             allowed_initiators=frozenset({SystemActor.OS}),
-            required_conditions=frozenset({TransitionCondition.DEPENDENCIES_ACCEPTED}),
+            required_conditions=frozenset(
+                {
+                    TransitionCondition.DEPENDENCIES_ACCEPTED,
+                    TransitionCondition.ORIGINATING_PLAN_ACTIVE,
+                }
+            ),
         ),
         TransitionDefinition(
             from_state=TaskStatus.READY,

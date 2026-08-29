@@ -13,6 +13,7 @@ from ai_engineering_os.domain.base import (
     Slug,
     utc_now,
 )
+from ai_engineering_os.domain.conditions import TransitionCondition
 from ai_engineering_os.domain.decision import (
     DECISION_AUTHORITY,
     Decision,
@@ -40,6 +41,8 @@ from ai_engineering_os.domain.errors import (
     ImmutableRecordError,
     InvariantViolationError,
     RevisionSequenceError,
+    RuleContextIncompleteError,
+    RuleDefinitionError,
     StateMachineDefinitionError,
 )
 from ai_engineering_os.domain.evidence import (
@@ -107,6 +110,8 @@ __all__ = [
     "ReviewDecisionId",
     "ReviewOutcome",
     "RevisionSequenceError",
+    "RuleContextIncompleteError",
+    "RuleDefinitionError",
     "Sha256Hex",
     "Slug",
     "StateMachineDefinitionError",
@@ -119,6 +124,7 @@ __all__ = [
     "TaskRevisionId",
     "TaskStatus",
     "TestResult",
+    "TransitionCondition",
     "VerificationGuide",
     "WorkPackage",
     "WorkPackageId",

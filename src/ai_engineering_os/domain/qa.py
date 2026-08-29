@@ -15,6 +15,7 @@ from ai_engineering_os.domain.identifiers import (
     FeatureId,
     QADefectId,
     QAReportId,
+    TaskId,
     TaskRevisionId,
 )
 
@@ -34,6 +35,23 @@ class QADefect(DomainModel):
 
     Severity and Priority are recorded as labels: Design Session 004 explicitly
     leaves the classification system open, so no scale is invented here.
+
+    **Scope is an association, never a declaration (ADR-003 3.11, ADR-004 4.8).**
+    A defect records the entity it was found against; the OS derives acceptance
+    impact by resolving that association. There is deliberately no ``in_scope``
+    boolean, because a QA self-assessment is never accepted as the authority.
+
+    | ``scope_task_id`` | ``scope_feature_id`` | Meaning                        |
+    | :---------------- | :------------------- | :----------------------------- |
+    | set               | unset                | Resolves ``Defect -> Task -> Feature`` |
+    | unset             | set                  | Resolves ``Defect -> Feature``  |
+    | unset             | unset                | Scope unresolved — valid to record |
+    | set               | set                  | Rejected at construction        |
+
+    Recording a defect with no association stays valid on purpose: ADR-003 3.11's
+    "scope unresolved" path must be constructible, or the rule that must reject it
+    could never be exercised. Resolution itself is performed by the Rule Engine
+    against supplied facts, never by this model.
     """
 
     id: QADefectId
@@ -42,6 +60,18 @@ class QADefect(DomainModel):
     priority: NonEmptyText
     is_blocker: bool = False
     status: DefectStatus = DefectStatus.OPEN
+    scope_task_id: TaskId | None = None
+    scope_feature_id: FeatureId | None = None
+
+    @model_validator(mode="after")
+    def _scope_association_must_be_singular(self) -> "QADefect":
+        """A defect is found against a Task or a Feature, never both (ADR-004 4.8)."""
+        if self.scope_task_id is not None and self.scope_feature_id is not None:
+            raise ValueError(
+                "A QA defect cannot associate with both a Task and a Feature; "
+                "a Task association already resolves to its Feature"
+            )
+        return self
 
     @property
     def is_unresolved(self) -> bool:

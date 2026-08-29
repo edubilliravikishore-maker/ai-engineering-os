@@ -11,6 +11,8 @@ __all__ = [
     "ImmutableRecordError",
     "InvariantViolationError",
     "RevisionSequenceError",
+    "RuleContextIncompleteError",
+    "RuleDefinitionError",
     "StateMachineDefinitionError",
 ]
 
@@ -66,3 +68,30 @@ class StateMachineDefinitionError(DomainError):
     """Raised when a state machine is declared with an inconsistent transition graph."""
 
     code: ClassVar[str] = "STATE_MACHINE_DEFINITION"
+
+
+class RuleDefinitionError(DomainError):
+    """Raised when a rule set is declared with an inconsistent contract.
+
+    Duplicate identifiers, duplicate conditions, an unknown prerequisite, or a
+    prerequisite that does not sort strictly earlier than its dependent are all
+    definition errors, detected when the registry is constructed rather than
+    during an evaluation.
+    """
+
+    code: ClassVar[str] = "RULE_DEFINITION"
+
+
+class RuleContextIncompleteError(DomainError):
+    """Raised when the supplied facts do not cover what a rule requires.
+
+    The Rule Engine fails closed: a rule never passes because the caller forgot
+    to supply a fact (ADR-004 4.4).
+    """
+
+    code: ClassVar[str] = "RULE_CONTEXT_INCOMPLETE"
+
+    def __init__(self, message: str, *, rule_id: str, missing_facts: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.rule_id = rule_id
+        self.missing_facts = missing_facts

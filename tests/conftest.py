@@ -126,11 +126,13 @@ def feature_plan(feature: Feature, coordinator_id: ActorId) -> FeaturePlan:
 
 
 @pytest.fixture
-def task(feature: Feature) -> Task:
-    """A newly created Task with no dependencies."""
+def task(feature: Feature, feature_plan: FeaturePlan) -> Task:
+    """A newly created Task with no dependencies, traceable to its plan."""
     return Task(
         id=new_id(TaskId),
         feature_id=feature.id,
+        feature_plan_id=feature_plan.id,
+        plan_definition_key="auth-api",
         title="Implement Auth API",
         capability=CapabilityType.BACKEND,
     )

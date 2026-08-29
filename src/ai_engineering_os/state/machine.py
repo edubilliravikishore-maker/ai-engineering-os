@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, ClassVar
 
+from ai_engineering_os.domain.conditions import TransitionCondition
 from ai_engineering_os.domain.enums import Initiator
 from ai_engineering_os.domain.errors import DomainError, StateMachineDefinitionError
 
@@ -39,47 +40,10 @@ class TransitionRejectionCode(StrEnum):
     UNAUTHORIZED_INITIATOR = "UNAUTHORIZED_INITIATOR"
 
 
-class TransitionCondition(StrEnum):
-    """Named OS validation requirements declared by a transition.
-
-    These are the "OS Validation Requirements" columns of Implementation
-    Blueprint sections 5.1 and 5.2, transcribed as identifiers. This checkpoint
-    declares them; the Rule & Policy Engine (Checkpoint 3) evaluates them.
-    """
-
-    # Feature lifecycle (Blueprint 5.1)
-    FEATURE_PLAN_ATTACHED = "FEATURE_PLAN_ATTACHED"
-    PLAN_HAS_TASK_DEFINITIONS = "PLAN_HAS_TASK_DEFINITIONS"
-    PLAN_IS_READY = "PLAN_IS_READY"
-    PLAN_DEPENDENCIES_VALID = "PLAN_DEPENDENCIES_VALID"
-    TASKS_INSTANTIATED = "TASKS_INSTANTIATED"
-    ALL_IMPLEMENTATION_TASKS_ACCEPTED = "ALL_IMPLEMENTATION_TASKS_ACCEPTED"
-    ALL_TASKS_ACCEPTED = "ALL_TASKS_ACCEPTED"
-    QA_FINAL_PASS_RECORDED = "QA_FINAL_PASS_RECORDED"
-    ZERO_UNRESOLVED_IN_SCOPE_DEFECTS = "ZERO_UNRESOLVED_IN_SCOPE_DEFECTS"
-    MANDATORY_EVIDENCE_PRESENT = "MANDATORY_EVIDENCE_PRESENT"
-    QA_DEFECT_FINDINGS_RECORDED = "QA_DEFECT_FINDINGS_RECORDED"
-
-    # Task lifecycle (Blueprint 5.2)
-    TASK_HAS_DEPENDENCIES = "TASK_HAS_DEPENDENCIES"
-    DEPENDENCIES_ACCEPTED = "DEPENDENCIES_ACCEPTED"
-    WORKER_IS_ACTIVE = "WORKER_IS_ACTIVE"
-    WORKER_CAPABILITY_MATCHES = "WORKER_CAPABILITY_MATCHES"
-    REQUESTER_IS_ASSIGNED_WORKER = "REQUESTER_IS_ASSIGNED_WORKER"
-    WORK_PACKAGE_PRESENT = "WORK_PACKAGE_PRESENT"
-    CLAIMS_DEFINED = "CLAIMS_DEFINED"
-    MANDATORY_SYSTEM_EVIDENCE_ATTACHED = "MANDATORY_SYSTEM_EVIDENCE_ATTACHED"
-    VERIFICATION_GUIDE_PRESENT = "VERIFICATION_GUIDE_PRESENT"
-    REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED"
-    REVIEW_DECISION_APPROVED = "REVIEW_DECISION_APPROVED"
-    REVIEW_NOTES_PRESENT = "REVIEW_NOTES_PRESENT"
-    REVIEW_DECISION_CHANGES_REQUESTED = "REVIEW_DECISION_CHANGES_REQUESTED"
-    REVIEW_FEEDBACK_PRESENT = "REVIEW_FEEDBACK_PRESENT"
-    QA_REPORT_PASSED = "QA_REPORT_PASSED"
-    TEST_EXECUTION_EVIDENCE_PRESENT = "TEST_EXECUTION_EVIDENCE_PRESENT"
-    QA_REPORT_FAILED = "QA_REPORT_FAILED"
-    DEFECTS_DOCUMENTED = "DEFECTS_DOCUMENTED"
-    INCREMENTED_REVISION_CREATED = "INCREMENTED_REVISION_CREATED"
+# The condition vocabulary is owned by the domain layer (ADR-004 4.7).
+# ``TransitionCondition`` is re-exported here so existing imports from
+# ``ai_engineering_os.state`` continue to resolve. The state layer *declares*
+# which conditions govern each edge; the rules layer evaluates them.
 
 
 @dataclass(frozen=True, slots=True)

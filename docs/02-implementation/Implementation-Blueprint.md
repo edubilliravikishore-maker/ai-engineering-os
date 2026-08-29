@@ -252,7 +252,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 - **Core Attributes:** `is_final_pass` (bool), `tested_scope` (list), `results` (list of `TestResult`: `name`, `passed`, `details`), `defects` (list of `QADefect`: `id`, `title`, `severity`, `priority`, `is_blocker`, `status`, `scope_task_id` (UUID, optional), `scope_feature_id` (UUID, optional)), `evidence_ids` (list of Evidence UUIDs), `status` (`QAStatus`: `PASSED`, `FAILED`, `BLOCKED`), `created_at`.
 - **Defect Status (ADR-003 3.6):** `status` is `DefectStatus`: `OPEN` / `RESOLVED`. This is the minimum vocabulary that makes Design Session 009's "zero unresolved in-scope defects" machine-computable.
 - **Severity & Priority (ADR-003 3.6):** `severity` and `priority` remain **non-empty free-text labels**. Design Session 004 explicitly leaves the classification system open, and no taxonomy is introduced here. They feed Coordinator remediation prioritisation, which is agent judgement rather than deterministic OS enforcement.
-- **Defect Scope (ADR-003 3.11):** A defect's acceptance impact is **derived by the OS from an explicit structural association**. The OS **never** accepts an `in_scope` boolean from QA. Every defect references either the **Task** it was found against (`scope_task_id`) or the **Feature** directly (`scope_feature_id`) when no Task represents the affected capability. The OS resolves `Defect -> Task -> Feature`, or `Defect -> Feature`, and validates that the referenced entity exists and resolves to the Feature under validation. A defect resolving to a different Feature is permanently recorded and does not block this Feature's acceptance.
+- **Defect Scope (ADR-003 3.11, as amended 2026-08-29):** A defect's acceptance impact is **derived by the OS from an explicit structural association**. The OS **never** accepts an `in_scope` boolean from QA. Every defect references either the **Task** it was found against (`scope_task_id`) or the **Feature** directly (`scope_feature_id`) when no Task represents the affected capability. The OS resolves `Defect -> Task -> Feature`, or `Defect -> Feature`. **A defect resolving to a different Feature is out of scope for the Feature being accepted: it is permanently recorded and does not block that Feature** (ADR-004 4.14). Only **genuinely unresolved** scope blocks acceptance.
 - **Defect Scope Cardinality (ADR-004 4.8):** Exactly one of the two scope associations may be set, or neither:
 
   | `scope_task_id` | `scope_feature_id` | Meaning |
@@ -263,7 +263,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
   | set | set | **Rejected at construction** |
 
   **Both-absent must remain valid** so the unresolved-scope path stays reachable and testable. No trusted `in_scope` boolean exists on the model, and none may be added.
-- **QA Final Pass Validity (ADR-003 3.11):** If the association is absent, resolves to no entity, or resolves to a different Feature than the report's, the defect's scope is **unresolved** and the OS does not guess. A report with `is_final_pass = true` carrying any scope-unresolved defect is **not a valid QA Final Pass**; a Feature Acceptance relying on it is rejected with an explicit reason naming the defect (§5.1). Resolution comes from QA supplying a valid association, never from OS inference.
+- **QA Final Pass Validity (ADR-003 3.11, as amended 2026-08-29):** If the association is **absent**, or **resolves to no entity**, the defect's scope is **unresolved** and the OS does not guess. A report with `is_final_pass = true` carrying any scope-unresolved defect is **not a valid QA Final Pass**; a Feature Acceptance relying on it is rejected with an explicit reason naming the defect (§5.1). Resolution comes from QA supplying a valid association, never from OS inference. **A different-Feature association is no longer classified as unresolved** — see *Defect Scope* above and ADR-004 4.14.
+- **QA History Is Audit History (ADR-004 4.15):** QA Reports are immutable, and **repeat QA is normal** — a report is scoped to a Task Revision, and the §5.1 `IN_VALIDATION -> IN_PROGRESS` rework loop produces more of them. **No record limits a Feature to one QA Report.** **The mechanism that identifies the authoritative / current QA result is UNRESOLVED** (§14 item 18) and **must not be invented during implementation**: no recency ordering, sequence number, timestamp comparison, "latest" marker, `current_report_id`, QA session identity, or persistence query. **Selecting the authoritative result belongs to the Checkpoint 6 Kernel / context loader; the rule layer evaluates the facts it is supplied and takes no view on their cardinality** (ADR-004 4.4, 4.15). A rule that rejected a Feature merely because several reports were supplied would be inventing QA workflow semantics it does not own.
+- **Dangling Feature References Are Not Validated (ADR-004 4.16):** A dangling **Task** association *is* detected, because the rule layer is supplied the Tasks needed to check it. A dangling **Feature** association is **not** detectable in Foundation v1 Checkpoint 3: the approved seven-fact `RuleContext` (§11, ADR-004 4.4) supplies only the Feature under acceptance, and **no `known_feature_ids` fact is added**. An existing different Feature and a nonexistent Feature identifier are therefore indistinguishable, and both are treated as out of scope. **The OS does not claim to validate Feature-reference existence at Checkpoint 3.** This must be addressed when the persistence / context-loader layer is designed (§14 item 19).
 - **Scope Boundary (ADR-003 3.11):** The OS enforces the **integrity of the relationship**, not the semantic correctness of the judgement behind it. `Feature.in_scope` / `out_of_scope` remain free-text (Design Session 009) and the OS performs **no** text matching against them. Which Task or Feature a defect belongs to remains QA judgement, resolvable by the Coordinator under the Design Session 009 disagreement path.
 
 #### 8. Decision & Decision Acknowledgement
@@ -325,7 +327,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | `DRAFT` | `PLANNED` | `COORDINATOR` | Valid Feature Plan attached with at least one task definition. | Missing feature plan or empty task list. |
 | `PLANNED` | `IN_PROGRESS` | `COORDINATOR` | Plan transitions `READY` -> `ACTIVE` (§5.4). Activation instantiates any task definition that has no Task yet and **authorizes** the plan's Tasks (ADR-003 3.12). | Plan is incomplete or invalid dependencies exist. |
 | `IN_PROGRESS` | `IN_VALIDATION` | `COORDINATOR` / `OS` | All implementation tasks have reached `ACCEPTED` status from Reviewer. | Any implementation task is still in progress or rejected. |
-| `IN_VALIDATION` | `ACCEPTED` | `COORDINATOR` | 1. All tasks completed.<br>2. Valid `QA Final Pass` exists.<br>3. Zero unresolved defects whose scope resolves to this Feature via `Defect -> Task -> Feature` (ADR-003 3.11).<br>4. Mandatory evidence attached. | Missing QA Final Pass, unresolved blocker, incomplete task, or a defect on the QA Final Pass whose scope cannot be resolved. |
+| `IN_VALIDATION` | `ACCEPTED` | `COORDINATOR` | 1. All tasks completed.<br>2. Valid `QA Final Pass` exists.<br>3. Zero unresolved defects whose scope resolves to this Feature via `Defect -> Task -> Feature` or `Defect -> Feature` (ADR-003 3.11 as amended; a defect resolving to a **different** Feature is out of scope and does not block — ADR-004 4.14).<br>4. Mandatory evidence attached. | Missing QA Final Pass, unresolved blocker, incomplete task, or a defect whose scope cannot be resolved. |
 | `IN_VALIDATION` | `IN_PROGRESS` | `COORDINATOR` / `QA` | QA Report indicates failure or defects requiring new worker tasks. | Transition requested without valid defect findings. |
 
 ---
@@ -752,7 +754,7 @@ Step 11: History & Audit Verification
 ## 11. Initial Project Structure
 
 > [!NOTE]
-> Status markers reflect the repository as of the completion of Checkpoint 2. `[IMPLEMENTED — CPn]` marks code that exists today; `[PLANNED — CPn]` marks the Foundation v1 target for a later checkpoint (§13). Governance and documentation directories not central to the runtime (`archive/`, `assets/`, `experiments/`, `founders/`, `knowledge/`, `labs/`, `playbooks/`, `prompts/`, `reference/`, `templates/`, `weekly/`) are summarized rather than expanded.
+> Status markers reflect the repository as of the completion of Checkpoint 3. `[IMPLEMENTED — CPn]` marks code that exists today; `[PLANNED — CPn]` marks the Foundation v1 target for a later checkpoint (§13). Governance and documentation directories not central to the runtime (`archive/`, `assets/`, `experiments/`, `founders/`, `knowledge/`, `labs/`, `playbooks/`, `prompts/`, `reference/`, `templates/`, `weekly/`) are summarized rather than expanded.
 
 ```
 AI-Engineering-OS/
@@ -794,7 +796,7 @@ AI-Engineering-OS/
 │       │   ├── errors.py       # Structured domain errors (no transport concerns)
 │       │   ├── identifiers.py  # Strongly typed entity identifiers
 │       │   ├── enums.py        # Statuses, Roles, Capabilities, EvidenceTypes
-│       │   ├── conditions.py   # TransitionCondition vocabulary (ADR-004 4.7)  [PLANNED — CP3]
+│       │   ├── conditions.py   # TransitionCondition vocabulary (ADR-004 4.7)  [IMPLEMENTED — CP3]
 │       │   ├── actor.py        # Actor identity & capability matching
 │       │   ├── feature.py      # Feature & Scope models
 │       │   ├── plan.py         # FeaturePlan & TaskDefinition models
@@ -812,7 +814,7 @@ AI-Engineering-OS/
 │       │   ├── task_sm.py      # Task lifecycle graph (§5.2)
 │       │   └── work_package_sm.py # Work Package lifecycle graph (§5.3)
 │       │
-│       ├── rules/              # Rule validation engine & policy rules        [PLANNED — CP3]
+│       ├── rules/              # Rule validation engine & policy rules        [IMPLEMENTED — CP3]
 │       │   ├── __init__.py     # Public rules surface
 │       │   ├── codes.py        # RuleId, RuleCode, RuleStage — stable machine vocabulary
 │       │   ├── results.py      # RuleStatus, RuleDetail, RuleResult, RuleEvaluation
@@ -879,11 +881,12 @@ AI-Engineering-OS/
     │   ├── test_config.py             # Settings & environment          [IMPLEMENTED — CP1]
     │   ├── test_domain_models.py      # Domain invariants & validation  [IMPLEMENTED — CP2]
     │   ├── test_domain_immutability.py # Additive history & immutability [IMPLEMENTED — CP2]
-    │   ├── test_domain_isolation.py   # Domain/state layer purity       [IMPLEMENTED — CP2]
+    │   ├── test_domain_isolation.py   # Domain/state/rules purity       [IMPLEMENTED — CP2/CP3]
     │   ├── test_state_machines.py     # Lifecycle transitions & authority [IMPLEMENTED — CP2]
-    │   ├── test_rule_engine.py     # Engine mechanics (stub rules)   [PLANNED — CP3]
-    │   ├── test_rules.py           # The six CP3 rules               [PLANNED — CP3]
-    │   └── test_rule_invariants.py # Condition partition & CP6 gate  [PLANNED — CP3]
+    │   ├── test_rule_engine.py     # Engine mechanics (stub rules)   [IMPLEMENTED — CP3]
+    │   ├── test_rules.py           # The six CP3 rules               [IMPLEMENTED — CP3]
+    │   ├── test_rule_invariants.py # Condition partition & CP6 gate  [IMPLEMENTED — CP3]
+    │   └── _rule_io_probe.py       # Subprocess audit-hook I/O probe  [IMPLEMENTED — CP3]
     ├── integration/
     │   ├── test_health.py             # Application health endpoint     [IMPLEMENTED — CP1]
     │   ├── test_database.py           # PostgreSQL connectivity         [IMPLEMENTED — CP1]
@@ -901,7 +904,7 @@ AI-Engineering-OS/
 - `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details.
 - `src/ai_engineering_os/api`: Provides clean HTTP contract without business logic pollution.
 - `tests/`: Separated into `unit`, `integration`, and `e2e` for fast local feedback loops.
-- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. It is synchronized with the repository at the end of Checkpoint 2 and must be re-synchronized as later checkpoints land.
+- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. It is synchronized with the repository at the end of Checkpoint 3 and must be re-synchronized as later checkpoints land.
 
 ---
 
@@ -1017,6 +1020,20 @@ Surfaced during the Checkpoint 3 planning review. Numbering continues §14.1 and
    - *Problem:* §5.2 gates `SUBMITTED -> IN_REVIEW` on `REVIEWER_ASSIGNED` and describes "automatic routing to assigned Reviewer", but **no domain concept exists**: `Task` (§4.1 #3) carries no reviewer, and no routing or assignment model is defined.
    - *Status:* **UNRESOLVED.** Classified `BLOCKED_CONDITIONS` (ADR-004 4.11). Foundation v1-required; blocks Checkpoint 6.
 
+### 14.3 Questions Carried Forward From The Checkpoint 3 Audit
+
+Surfaced by the Checkpoint 3 implementation audit and ruled on by the Builder on 2026-08-29 ([ADR-004](../../adr/ADR-004.md) 4.14–4.16). Numbering continues §14.2 and is stable.
+
+18. **Authoritative / Current QA-Result Selection Mechanism — UNRESOLVED. Must not be invented during implementation.**
+   - *Problem:* `QAReport` is immutable (§7.1), so an `OPEN` defect recorded in a superseded report stays `OPEN` in that record forever. Treating all historical reports as live blockers makes any Feature that ever failed QA permanently unacceptable and renders the §5.1 `IN_VALIDATION -> IN_PROGRESS` rework loop unreachable. Nothing in the architecture identifies which QA Report states a Feature's **current** defect position.
+   - *Ruling (ADR-004 4.15):* Historical QA Reports are **audit history, not standing vetoes**. **Selecting the authoritative result and evaluating it are separate concerns owned by separate components**: the Checkpoint 6 Kernel / context loader selects, and the rule layer evaluates whatever the `RuleContext` supplies, **taking no view on how many reports it receives**. **No recency ordering, sequence number, timestamp comparison, "latest" marker, `current_report_id`, QA session identity, persistence query, or additional `RuleContext` fact is introduced.**
+   - *Status:* **UNRESOLVED. Must be designed before Checkpoint 6**, which owns the context loader that decides which QA Reports a rule sees.
+   - *Known limitation:* until that mechanism exists, the correctness of `ZERO_UNRESOLVED_IN_SCOPE_DEFECTS` depends entirely on the caller supplying the right reports. Checkpoint 3 proves the ADR-003 3.11 **derivation**, not the end-to-end acceptance guarantee. **Recorded as a limitation, not claimed as enforcement.**
+19. **Referential Validation Of A Feature Scope Association — UNRESOLVED. No gate set on Checkpoint 3.**
+   - *Problem:* The seven-fact `RuleContext` (ADR-004 4.4) supplies only the Feature under acceptance, so an existing **different** Feature and a **nonexistent** Feature identifier are indistinguishable to a rule.
+   - *Ruling (ADR-004 4.16):* **No `known_feature_ids` fact is added** and no lookup is invented. Both cases are treated as out of scope under ADR-004 4.14. A dangling **Task** association *is* detected, because the Task facts needed to check it are supplied; the asymmetry follows directly from the approved fact set.
+   - *Status:* **UNRESOLVED. Must be addressed when the persistence / context-loader layer is designed** (Checkpoints 4 / 6). **Checkpoint 3 does not claim to validate Feature-reference existence.**
+
 ---
 
 ## 15. Implementation Checkpoints
@@ -1071,7 +1088,9 @@ These six are the four rules originally named for this checkpoint (`AuthorityRul
 - **`system_evidence_required` must be keyed off `Task.capability` (ADR-003 3.7), not off `claim_type`.** Design Session 005 defines Evidence Standards per Worker type.
 - **Evidence standards fail closed (ADR-004 4.9).** `BACKEND` requires `GIT_DIFF`, `TEST_OUTPUT`, and `API_RESPONSE`. **`FRONTEND` and `QA` standards are NOT invented**; a capability with no approved standard fails with the stable code `EVIDENCE_STANDARD_UNDEFINED`, never with an implicit pass. **`DB_VERIFICATION` is not in the deterministic mandatory set** and no applicability logic is invented (§14, items 12–13).
 - **Precondition — CLEARED.** §14 item 5 (in-scope defect identification) is resolved by ADR-003 3.11.
-- **`qa_in_scope_zero_defects` evaluates derived scope (ADR-003 3.11).** It resolves each defect via `Defect -> Task -> Feature` (or `Defect -> Feature`) and counts only unresolved defects resolving to the Feature under acceptance. It **must never read a QA-supplied `in_scope` flag**, and it must reject a QA Final Pass carrying any scope-unresolved defect, naming the defect in the rejection.
+- **`qa_in_scope_zero_defects` evaluates derived scope (ADR-003 3.11, as amended 2026-08-29).** It resolves each defect via `Defect -> Task -> Feature` (or `Defect -> Feature`) and counts only unresolved defects resolving to the Feature under acceptance. It **must never read a QA-supplied `in_scope` flag**, and it must reject a scope-unresolved defect, naming the defect in the rejection. **A defect resolving to a different Feature is out of scope and does not block** (ADR-004 4.14).
+- **QA history is not a standing veto, and the rule does not police its own facts (ADR-004 4.15).** `qa_in_scope_zero_defects` evaluates the QA Reports supplied in the `RuleContext` and **takes no view on their cardinality**; repeat QA per Task Revision and per rework cycle is normal. **Selecting the authoritative QA result belongs to the Checkpoint 6 context loader. The authoritative / current QA-result mechanism is NOT designed at Checkpoint 3** and must not be invented (§14 item 18).
+- **The seven-fact `RuleContext` is unchanged (ADR-004 4.16).** No `known_feature_ids` fact is added, so Checkpoint 3 **cannot** distinguish an existing different Feature from a nonexistent Feature identifier and does not claim to (§14 item 19).
 
 **Phase 3 — tests.** Engine mechanics against stub rules; pass/fail/code/details coverage for all six rules; real-rule hybrid scenarios (independent aggregation, prerequisite skipping, unevaluated-condition reporting) and the full ADR-003 3.11 defect-scope matrix; architectural invariants proving `rules/` imports no SQLAlchemy, storage, repository, session, FastAPI, or network client, performs no runtime I/O, mutates nothing, and leaves **no `TransitionCondition` unaccounted for**.
 

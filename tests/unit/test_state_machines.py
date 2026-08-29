@@ -238,6 +238,23 @@ def test_task_submission_declares_mandatory_evidence_conditions() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "from_state",
+    [TaskStatus.CREATED, TaskStatus.PENDING_DEPENDENCIES],
+    ids=lambda state: str(state),
+)
+def test_both_ready_edges_declare_the_originating_plan_gate(from_state: TaskStatus) -> None:
+    """Verifies ADR-003 3.12 / ADR-004 4.8 place authorization on every -> READY edge."""
+    evaluation = TASK_STATE_MACHINE.evaluate(from_state, TaskStatus.READY, SystemActor.OS)
+    assert evaluation.is_allowed
+    assert evaluation.required_conditions == frozenset(
+        {
+            TransitionCondition.DEPENDENCIES_ACCEPTED,
+            TransitionCondition.ORIGINATING_PLAN_ACTIVE,
+        }
+    )
+
+
 def test_rework_path_requires_an_incremented_revision() -> None:
     """Verifies REVISION_REQUIRED -> IN_PROGRESS declares the additive revision rule."""
     evaluation = TASK_STATE_MACHINE.evaluate(

@@ -65,6 +65,8 @@ def test_model_rejects_a_non_uuid_identifier() -> None:
         Task(
             id="not-a-uuid",
             feature_id=new_id(FeatureId),
+            feature_plan_id=new_id(FeaturePlanId),
+            plan_definition_key="auth-api",
             title="Implement Auth API",
             capability=CapabilityType.BACKEND,
         )
@@ -298,17 +300,55 @@ def test_plan_revision_number_starts_at_one(feature: Feature, coordinator_id: Ac
 # --------------------------------------------------------------------------
 
 
-def test_task_cannot_depend_on_itself(feature: Feature) -> None:
+def test_task_cannot_depend_on_itself(feature: Feature, feature_plan: FeaturePlan) -> None:
     """Verifies a Task cannot make itself unexecutable."""
     task_id = new_id(TaskId)
     with pytest.raises(ValidationError, match="cannot depend on itself"):
         Task(
             id=task_id,
             feature_id=feature.id,
+            feature_plan_id=feature_plan.id,
+            plan_definition_key="auth-api",
             title="Auth API",
             capability=CapabilityType.BACKEND,
             dependencies=(task_id,),
         )
+
+
+def test_task_requires_its_originating_plan_linkage(feature: Feature) -> None:
+    """Verifies ADR-004 4.8 makes Task-to-Plan-to-Definition traceability mandatory."""
+    with pytest.raises(ValidationError, match="feature_plan_id"):
+        Task.model_validate(
+            {
+                "id": new_id(TaskId),
+                "feature_id": feature.id,
+                "title": "Auth API",
+                "capability": CapabilityType.BACKEND,
+            }
+        )
+
+
+def test_task_plan_definition_key_must_be_a_slug(
+    feature: Feature, feature_plan: FeaturePlan
+) -> None:
+    """Verifies the plan-local definition key follows the Slug vocabulary (ADR-003 3.8)."""
+    with pytest.raises(ValidationError, match="plan_definition_key"):
+        Task(
+            id=new_id(TaskId),
+            feature_id=feature.id,
+            feature_plan_id=feature_plan.id,
+            plan_definition_key="Auth API",
+            title="Auth API",
+            capability=CapabilityType.BACKEND,
+        )
+
+
+def test_task_records_the_plan_definition_it_was_created_from(
+    task: Task, feature_plan: FeaturePlan
+) -> None:
+    """Verifies a Task resolves to a definition inside its originating plan."""
+    assert task.feature_plan_id == feature_plan.id
+    assert feature_plan.definition(task.plan_definition_key) is not None
 
 
 def test_pending_dependencies_requires_declared_dependencies(task: Task) -> None:
@@ -474,6 +514,69 @@ def _defect(*, is_blocker: bool = False, status: DefectStatus = DefectStatus.OPE
         is_blocker=is_blocker,
         status=status,
     )
+
+
+def test_defect_scope_may_be_unresolved() -> None:
+    """Verifies ADR-004 4.8: a defect with no association is valid to record."""
+    defect = _defect()
+    assert defect.scope_task_id is None
+    assert defect.scope_feature_id is None
+
+
+def test_defect_may_associate_with_a_task(task: Task) -> None:
+    """Verifies the Defect -> Task -> Feature association is representable."""
+    defect = QADefect(
+        id=new_id(QADefectId),
+        title="Login returns 500",
+        severity="CRITICAL",
+        priority="P1",
+        scope_task_id=task.id,
+    )
+    assert defect.scope_task_id == task.id
+    assert defect.scope_feature_id is None
+
+
+def test_defect_may_associate_with_a_feature(feature: Feature) -> None:
+    """Verifies the Defect -> Feature association is representable."""
+    defect = QADefect(
+        id=new_id(QADefectId),
+        title="No Task represents the affected capability",
+        severity="MAJOR",
+        priority="P2",
+        scope_feature_id=feature.id,
+    )
+    assert defect.scope_feature_id == feature.id
+    assert defect.scope_task_id is None
+
+
+def test_defect_cannot_associate_with_both_a_task_and_a_feature(
+    feature: Feature, task: Task
+) -> None:
+    """Verifies ADR-004 4.8 rejects an ambiguous double association at construction."""
+    with pytest.raises(ValidationError, match="cannot associate with both"):
+        QADefect(
+            id=new_id(QADefectId),
+            title="Login returns 500",
+            severity="CRITICAL",
+            priority="P1",
+            scope_task_id=task.id,
+            scope_feature_id=feature.id,
+        )
+
+
+def test_defect_carries_no_declared_in_scope_flag() -> None:
+    """Verifies ADR-003 3.11: scope is derived, never a QA-supplied boolean."""
+    assert "in_scope" not in QADefect.model_fields
+    with pytest.raises(ValidationError, match="in_scope"):
+        QADefect.model_validate(
+            {
+                "id": new_id(QADefectId),
+                "title": "Login returns 500",
+                "severity": "CRITICAL",
+                "priority": "P1",
+                "in_scope": True,
+            }
+        )
 
 
 def test_passed_qa_report_cannot_carry_unresolved_defects(feature: Feature) -> None:

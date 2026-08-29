@@ -8,12 +8,13 @@ from datetime import datetime
 
 from pydantic import Field, model_validator
 
-from ai_engineering_os.domain.base import DomainModel, NonEmptyText, utc_now
+from ai_engineering_os.domain.base import DomainModel, NonEmptyText, Slug, utc_now
 from ai_engineering_os.domain.enums import CapabilityType, TaskStatus
 from ai_engineering_os.domain.errors import ImmutableRecordError, RevisionSequenceError
 from ai_engineering_os.domain.identifiers import (
     ActorId,
     FeatureId,
+    FeaturePlanId,
     QAReportId,
     ReviewDecisionId,
     TaskId,
@@ -51,10 +52,24 @@ REVISION_REQUIRED_STATUSES: frozenset[TaskStatus] = frozenset(
 
 
 class Task(DomainModel):
-    """The smallest unit of work assigned to exactly one Worker."""
+    """The smallest unit of work assigned to exactly one Worker.
+
+    Every Task is traceable to the planning record that produced it
+    (ADR-003 3.12, ADR-004 4.8)::
+
+        Task -> Feature Plan -> plan-local Task Definition
+
+    ``feature_plan_id`` and ``plan_definition_key`` are both **required**.
+    Without the link the OS cannot evaluate the originating plan's status, and
+    the ``ORIGINATING_PLAN_ACTIVE`` gate on ``-> READY`` would be unenforceable.
+    Existence still confers no execution authority: a Task created under a
+    ``DRAFT`` plan is a planning record until the plan is ``ACTIVE``.
+    """
 
     id: TaskId
     feature_id: FeatureId
+    feature_plan_id: FeaturePlanId
+    plan_definition_key: Slug
     title: NonEmptyText
     capability: CapabilityType
     status: TaskStatus = TaskStatus.CREATED
