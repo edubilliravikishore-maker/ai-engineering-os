@@ -145,13 +145,29 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | Module | Responsibility | What It Owns | What It Must NOT Own | Dependencies |
 | :--- | :--- | :--- | :--- | :--- |
 | `domain` | Pure business entities and domain invariants | Domain entities, value objects, domain enums, type definitions | I/O, database queries, HTTP routing, LLM logic | None (Pydantic / stdlib only) |
-| `state` | Lifecycle state machines and transition graphs | Valid state graphs, transition definitions, state guards | Database sessions, HTTP handlers, agent prompting | `domain` |
-| `rules` | Deterministic policy and transition rule validation | Rule evaluator interfaces, evidence validators, authority checkers | State mutation, DB connection management | `domain` |
+| `state` | Lifecycle state machines and transition graphs | Valid state graphs, transition definitions, state guards | The condition vocabulary itself (owned by `domain`), database sessions, HTTP handlers, agent prompting | `domain` |
+| `rules` | Deterministic policy and transition rule validation | Rule engine, rule contract, `RuleContext`, `RuleResult`, evidence validators, authority checkers, condition classification registry | State mutation, DB connection management, lifecycle graphs, **any dependency on `state`** | `domain` |
 | `core` | OS Kernel execution and orchestration | Transaction runner, command handlers, enforcement pipeline | Raw SQL queries, HTTP request parsing, agent generation | `domain`, `state`, `rules`, `events`, `storage` (interfaces) |
 | `events` | Event definitions, event store, and notification bus | Event models, event serializer, Postgres LISTEN/NOTIFY publisher/listener | Domain business rules, HTTP endpoint logic | `domain`, `storage` |
 | `storage` | Relational persistence and migrations | SQLAlchemy models, repositories, session management, Alembic migrations | Domain logic, agent execution, API schemas | `domain`, SQLAlchemy, Alembic |
 | `api` | HTTP REST control plane | FastAPI routers, request/response schemas, auth/role extraction | Direct business logic, direct DB transactions (calls Kernel) | `core`, `domain`, FastAPI, Pydantic |
 | `client` | Provider-agnostic SDK for agents and tools | Typed HTTP client, request formatters, response parsers | OS internal state machine execution | `domain`, httpx / requests |
+
+> [!IMPORTANT]
+> **Condition vocabulary ownership (ADR-004 4.7).** The `TransitionCondition` vocabulary of named OS validation requirements is owned by **`domain`**. `state` and `rules` are both consumers of it, answering different questions about the same named requirement:
+>
+> ```
+>               domain
+>              /      \
+>          state      rules
+> ```
+>
+> - `domain` owns the named condition vocabulary.
+> - `state` owns lifecycle graphs and transition definitions, and **declares** which conditions govern each edge.
+> - `rules` **evaluates** the conditions.
+> - **`rules` must not depend on `state`.**
+>
+> Public re-exports from `state` are preserved for compatibility. Placing the shared vocabulary in the layer both consumers depend on is the only arrangement that satisfies the dependency table above without duplicating it, and a duplicated vocabulary is a vocabulary that will drift.
 
 ---
 
@@ -200,9 +216,16 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 #### 3. Task
 - **Identity:** `id` (UUID), `feature_id` (UUID), `title` (string).
-- **Core Attributes:** `capability` (`CapabilityType`: `BACKEND`, `FRONTEND`, `QA`, etc.), `status` (`TaskStatus`), `assigned_worker_id` (UUID, optional), `dependencies` (list of prerequisite Task UUIDs), `active_revision_number` (int), `feature_plan_id` (UUID), `plan_definition_key` (plan-local slug, §4.1 #2), `created_at`, `updated_at`.
+- **Core Attributes:** `capability` (`CapabilityType`: `BACKEND`, `FRONTEND`, `QA`, etc.), `status` (`TaskStatus`), `assigned_worker_id` (UUID, optional), `dependencies` (list of prerequisite Task UUIDs), `active_revision_number` (int), `feature_plan_id` (UUID, **required**), `plan_definition_key` (plan-local slug, §4.1 #2, **required**), `created_at`, `updated_at`.
 - **Relationship:** Belongs to one Feature; originates from one Feature Plan definition; owns 1..* Task Revisions.
 - **Existence vs Execution Authorization (ADR-003 3.12):** A Task may exist while its originating Feature Plan is still `DRAFT`. **Existence confers no authority to execute.** Execution authorization derives from the originating plan being `ACTIVE` and is enforced on the `-> READY` transition (§5.2). `feature_plan_id` and `plan_definition_key` exist so the OS can evaluate that precondition and so planning history stays traceable; without them the §5.2 rule is unenforceable.
+- **Plan Linkage Is Mandatory (ADR-004 4.8):** `feature_plan_id` and `plan_definition_key` are **both required**, not optional. Every Task is therefore traceable:
+
+  ```
+  Task  ->  Feature Plan  ->  plan-local Task Definition
+  ```
+
+  This is required for both planning history and future execution authorization. A Task that cannot name its originating plan and definition key cannot be authorized, and its planning provenance would be lost.
 
 #### 4. Task Revision
 - **Identity:** `id` (UUID), `task_id` (UUID), `revision_number` (int).
@@ -230,6 +253,16 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 - **Defect Status (ADR-003 3.6):** `status` is `DefectStatus`: `OPEN` / `RESOLVED`. This is the minimum vocabulary that makes Design Session 009's "zero unresolved in-scope defects" machine-computable.
 - **Severity & Priority (ADR-003 3.6):** `severity` and `priority` remain **non-empty free-text labels**. Design Session 004 explicitly leaves the classification system open, and no taxonomy is introduced here. They feed Coordinator remediation prioritisation, which is agent judgement rather than deterministic OS enforcement.
 - **Defect Scope (ADR-003 3.11):** A defect's acceptance impact is **derived by the OS from an explicit structural association**. The OS **never** accepts an `in_scope` boolean from QA. Every defect references either the **Task** it was found against (`scope_task_id`) or the **Feature** directly (`scope_feature_id`) when no Task represents the affected capability. The OS resolves `Defect -> Task -> Feature`, or `Defect -> Feature`, and validates that the referenced entity exists and resolves to the Feature under validation. A defect resolving to a different Feature is permanently recorded and does not block this Feature's acceptance.
+- **Defect Scope Cardinality (ADR-004 4.8):** Exactly one of the two scope associations may be set, or neither:
+
+  | `scope_task_id` | `scope_feature_id` | Meaning |
+  | :--- | :--- | :--- |
+  | set | unset | Defect found against a Task; scope resolves `Defect -> Task -> Feature` |
+  | unset | set | No Task represents the affected capability; scope resolves `Defect -> Feature` |
+  | unset | unset | **Unresolved scope** — valid to record; invalidates a QA Final Pass |
+  | set | set | **Rejected at construction** |
+
+  **Both-absent must remain valid** so the unresolved-scope path stays reachable and testable. No trusted `in_scope` boolean exists on the model, and none may be added.
 - **QA Final Pass Validity (ADR-003 3.11):** If the association is absent, resolves to no entity, or resolves to a different Feature than the report's, the defect's scope is **unresolved** and the OS does not guess. A report with `is_final_pass = true` carrying any scope-unresolved defect is **not a valid QA Final Pass**; a Feature Acceptance relying on it is rejected with an explicit reason naming the defect (§5.1). Resolution comes from QA supplying a valid association, never from OS inference.
 - **Scope Boundary (ADR-003 3.11):** The OS enforces the **integrity of the relationship**, not the semantic correctness of the judgement behind it. `Feature.in_scope` / `out_of_scope` remain free-text (Design Session 009) and the OS performs **no** text matching against them. Which Task or Feature a defect belongs to remains QA judgement, resolvable by the Coordinator under the Design Session 009 disagreement path.
 
@@ -351,7 +384,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | From State | To State | Requester Role | OS Validation Requirements | Rejection Triggers |
 | :--- | :--- | :--- | :--- | :--- |
 | `CREATED` | `PENDING_DEPENDENCIES` | `OS` | Task has prerequisite task IDs. | No dependencies declared. |
-| `CREATED` / `PENDING_` | `READY` | `OS` | 1. Originating Feature Plan is `ACTIVE` (ADR-003 3.12).<br>2. All declared prerequisite task IDs are in `ACCEPTED` state. | Originating Feature Plan is not `ACTIVE`, or a prerequisite task is not `ACCEPTED`. |
+| `CREATED` / `PENDING_` | `READY` | `OS` | 1. Originating Feature Plan is `ACTIVE` — `ORIGINATING_PLAN_ACTIVE` (ADR-003 3.12; declared per ADR-004 4.8).<br>2. All declared prerequisite task IDs are in `ACCEPTED` state — `DEPENDENCIES_ACCEPTED`. | Originating Feature Plan is not `ACTIVE`, or a prerequisite task is not `ACCEPTED`. |
 | `READY` | `ASSIGNED` | `COORDINATOR` | Worker ID is active and possesses matching capability. | Worker inactive, nonexistent, or wrong capability. |
 | `ASSIGNED` | `IN_PROGRESS` | `WORKER` | Requester matches `assigned_worker_id`. | Requester is not assigned worker. |
 | `IN_PROGRESS` | `SUBMITTED` | `WORKER` | 1. Work Package present.<br>2. Claims defined.<br>3. Mandatory System Evidence attached.<br>4. Verification guide present. | Missing System Evidence, empty claims, or missing verification guide. |
@@ -367,6 +400,9 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 
 > [!NOTE]
 > **Task existence is not execution authority (ADR-003 3.12).** A Task may be created while its Feature Plan is still `DRAFT`. Such a Task rests in `CREATED` or `PENDING_DEPENDENCIES` — legitimate resting states for planned-but-unauthorized work, not states that imply imminent execution. It becomes executable only once its originating Feature Plan is `ACTIVE`, enforced on the `-> READY` edge above and nowhere else. **"A Task exists" is not "a Task is authorized to execute."**
+
+> [!WARNING]
+> **`ORIGINATING_PLAN_ACTIVE` is declared, not yet enforced (ADR-004 4.8, 4.11).** Checkpoint 3 adds `ORIGINATING_PLAN_ACTIVE` to the condition vocabulary and declares it on **both** `-> READY` edges above. **The rule that evaluates it is deliberately deferred** and sits in `PENDING_RULE_EXPANSION`; ADR-003 3.12 places its enforcement with the Checkpoint 6 transition runner. Until that rule exists, the Rule Engine reports this condition as *unevaluated* on every `-> READY` evaluation rather than passing it silently. The declaration is a domain/state record required by an already-approved decision — **it is not permission to widen the Checkpoint 3 rule set** (§15 Checkpoint 3).
 
 ---
 
@@ -758,6 +794,7 @@ AI-Engineering-OS/
 │       │   ├── errors.py       # Structured domain errors (no transport concerns)
 │       │   ├── identifiers.py  # Strongly typed entity identifiers
 │       │   ├── enums.py        # Statuses, Roles, Capabilities, EvidenceTypes
+│       │   ├── conditions.py   # TransitionCondition vocabulary (ADR-004 4.7)  [PLANNED — CP3]
 │       │   ├── actor.py        # Actor identity & capability matching
 │       │   ├── feature.py      # Feature & Scope models
 │       │   ├── plan.py         # FeaturePlan & TaskDefinition models
@@ -776,12 +813,17 @@ AI-Engineering-OS/
 │       │   └── work_package_sm.py # Work Package lifecycle graph (§5.3)
 │       │
 │       ├── rules/              # Rule validation engine & policy rules        [PLANNED — CP3]
-│       │   ├── __init__.py
-│       │   ├── engine.py       # Rule execution pipeline
-│       │   ├── base.py         # Abstract rule class
-│       │   ├── authority.py    # Role & permission checks
-│       │   ├── evidence.py     # Mandatory System/Worker evidence checks
-│       │   └── acceptance.py   # QA Final Pass & blocker checks
+│       │   ├── __init__.py     # Public rules surface
+│       │   ├── codes.py        # RuleId, RuleCode, RuleStage — stable machine vocabulary
+│       │   ├── results.py      # RuleStatus, RuleDetail, RuleResult, RuleEvaluation
+│       │   ├── context.py      # RuleFact & frozen RuleContext (caller-supplied facts)
+│       │   ├── base.py         # Abstract Rule contract
+│       │   ├── registry.py     # Rule registry, four-way condition classification, CP6 gate set
+│       │   ├── engine.py       # Rule execution pipeline (hybrid, deterministic order)
+│       │   ├── authority.py    # Role & permission checks          — CP3: 1 rule
+│       │   ├── dependencies.py # Plan & dependency checks          — CP3: 1 rule
+│       │   ├── evidence.py     # Mandatory System/Worker evidence  — CP3: 1 rule
+│       │   └── acceptance.py   # QA Final Pass & scoped defects    — CP3: 3 rules
 │       │
 │       ├── core/               # OS kernel & transactional coordinator        [PLANNED — CP6]
 │       │   ├── __init__.py
@@ -839,7 +881,9 @@ AI-Engineering-OS/
     │   ├── test_domain_immutability.py # Additive history & immutability [IMPLEMENTED — CP2]
     │   ├── test_domain_isolation.py   # Domain/state layer purity       [IMPLEMENTED — CP2]
     │   ├── test_state_machines.py     # Lifecycle transitions & authority [IMPLEMENTED — CP2]
-    │   └── test_rule_engine.py                                          [PLANNED — CP3]
+    │   ├── test_rule_engine.py     # Engine mechanics (stub rules)   [PLANNED — CP3]
+    │   ├── test_rules.py           # The six CP3 rules               [PLANNED — CP3]
+    │   └── test_rule_invariants.py # Condition partition & CP6 gate  [PLANNED — CP3]
     ├── integration/
     │   ├── test_health.py             # Application health endpoint     [IMPLEMENTED — CP1]
     │   ├── test_database.py           # PostgreSQL connectivity         [IMPLEMENTED — CP1]
@@ -853,7 +897,7 @@ AI-Engineering-OS/
 
 ### Directory Rationale
 - `src/ai_engineering_os/domain`: Kept isolated from I/O so domain rules and schemas are testable in microseconds without database mocks.
-- `src/ai_engineering_os/state` & `rules`: Encapsulates OS deterministic behavior separate from web frameworks or ORMs.
+- `src/ai_engineering_os/state` & `rules`: Encapsulates OS deterministic behavior separate from web frameworks or ORMs. Both depend on `domain` only; **`rules` must not depend on `state`** (§3, ADR-004 4.7).
 - `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details.
 - `src/ai_engineering_os/api`: Provides clean HTTP contract without business logic pollution.
 - `tests/`: Separated into `unit`, `integration`, and `e2e` for fast local feedback loops.
@@ -927,7 +971,7 @@ The following were surfaced during Checkpoint 2. Item numbering is stable and is
 5. **In-Scope Defect Identification — RESOLVED 2026-08-25 (ADR-003 3.11).**
    - *Problem (as recorded):* Design Session 009 gates Feature Acceptance on "zero unresolved **in-scope** defects", but `QADefect` (§4.1 #7) carries no in-scope marker, and `Feature.in_scope` is a free-text list a defect cannot be mechanically matched against.
    - *Ruling:* Scope is **derived by the OS from a validated structural association** (`Defect -> Task -> Feature`, or `Defect -> Feature`), never from a QA-supplied boolean. A scope-unresolved defect invalidates a QA Final Pass. The OS validates the relationship, not the judgement behind it. See §4.1 #7 and §5.1.
-   - *Consequence:* `QAInScopeZeroDefectRule` (§15 Checkpoint 3) can now be written deterministically, and `QADefect` gains scope-association fields.
+   - *Consequence:* `QAInScopeZeroDefectRule` (§15 Checkpoint 3) can now be written deterministically, and `QADefect` gains scope-association fields. **Implemented by ADR-004 4.8 (scope cardinality) and 4.10 (the `qa_in_scope_zero_defects` rule).**
 6. **Escalation Blocking / `BLOCKED` State — DEFERRED. Must be designed explicitly before implementation.**
    - *Requirement:* Design Session 008 requires the OS to prevent affected Workers continuing knowingly invalid work after an Orchestrator decision, while preserving the current work.
    - *Status:* Deferred from Foundation v1 (ADR-003 3.3). Not implemented, and knowingly unserved in v1. Entry states, exit states, and initiating authority must all be designed before any implementation.
@@ -936,7 +980,7 @@ The following were surfaced during Checkpoint 2. Item numbering is stable and is
    - *Status:* Deferred from Foundation v1 (ADR-003 3.10), which uses `Actor.is_active` only. **This is an explicit deferral, not a rejection.** No `coordinators` or Domain Registry persistence may be created until it is resolved.
 8. **Task Instantiation Timing — RESOLVED 2026-08-25 (ADR-003 3.12).**
    - *Problem (as recorded):* Design Session 007 states the Coordinator creates Tasks only when their dependencies are satisfied and that Tasks are not created speculatively. §5.1 requires Tasks to be instantiated at `PLANNED -> IN_PROGRESS`, with §5.2 providing `PENDING_DEPENDENCIES` to park them. These describe different instantiation timings.
-   - *Ruling:* Tasks **may be created while the plan is `DRAFT`**; existence confers no execution authority. Authorization derives from the originating plan being `ACTIVE` and is enforced on `-> READY` (§5.2). Design Session 007's protection is preserved by the gate rather than by delaying creation. `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3).
+   - *Ruling:* Tasks **may be created while the plan is `DRAFT`**; existence confers no execution authority. Authorization derives from the originating plan being `ACTIVE` and is enforced on `-> READY` (§5.2). Design Session 007's protection is preserved by the gate rather than by delaying creation. `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3). **ADR-004 4.8 performs that revisit at Checkpoint 3 start and makes both fields required; the `ORIGINATING_PLAN_ACTIVE` rule itself remains deferred (§5.2, §15 Checkpoint 3).**
 9. **Post-Supersession Routing — RESOLVED IN PART 2026-08-25 (ADR-003 3.13). Residual UNRESOLVED; relevant to Checkpoint 6.**
    - *Problem (as recorded):* Design Session 009 does not state what happens to a Feature when its plan is superseded, or how the successor plan revision is instantiated.
    - *Ruling (Plan and Tasks):* The OS performs **no automatic routing** — no migration, no deletion, no halting. The Coordinator explicitly dispositions each unfinished Task (resume / reuse / abandon / redirect, Design Session 008). Not-yet-authorized Tasks simply remain unauthorized; in-flight Tasks are not interrupted, because Foundation v1 has no halt mechanism (item 6). See §5.4.
@@ -946,6 +990,32 @@ The following were surfaced during Checkpoint 2. Item numbering is stable and is
 11. **Task Stop / Abandon Lifecycle and Disposition Record — DEFERRED (ADR-003 D-6). Must be designed explicitly before any post-supersession disposition is implemented.**
    - *Requirement:* ADR-003 3.13 allows work that is no longer required to be "stopped according to the eventual lifecycle rules", and leaves the Coordinator's disposition decision unrecorded.
    - *Status:* The Task lifecycle (§5.2) defines **no** terminal state for stopped work, and no entity records a disposition decision or links a superseded plan's Task to successor planned work. Deferred from Foundation v1, not rejected. Relevant to Checkpoint 6.
+
+### 14.2 Questions Carried Forward From ADR-004
+
+Surfaced during the Checkpoint 3 planning review. Numbering continues §14.1 and is stable.
+
+12. **`FRONTEND` and `QA` Mandatory System Evidence Standards — UNRESOLVED. Must not be invented during implementation.**
+   - *Problem:* Design Session 005 defines Evidence Standards for the **Backend Worker only**. §4.1 #5 and §5.2 require mandatory System Evidence keyed by `Task.capability` (ADR-003 3.7), but no standard exists for `FRONTEND` or `QA`.
+   - *Interim behaviour (ADR-004 4.9):* a capability with no approved standard **fails closed** with the stable code `EVIDENCE_STANDARD_UNDEFINED`. **An undefined standard is never treated as "no evidence required."** The code is deliberately distinct from `MISSING_SYSTEM_EVIDENCE` so a rejection never falsely blames the Worker for a gap in the OS.
+   - *Status:* **UNRESOLVED.** Must be resolved before any Frontend or QA Task can be submitted. Not exercised by the Foundation v1 vertical slice, which uses a backend Worker.
+13. **Deterministic Applicability for `DB_VERIFICATION` — UNRESOLVED. Must not be invented during implementation.**
+   - *Problem:* Design Session 005 lists database verification as required for a Backend Worker "**when applicable**". Applicability is engineering judgement, which Design Session 005 assigns to the Reviewer at Stage 2 rather than to deterministic OS enforcement at Stage 1.
+   - *Ruling (ADR-004 4.9):* `DB_VERIFICATION` is **not** part of the deterministic mandatory Checkpoint 3 evidence set. **No applicability logic is invented.**
+   - *Status:* **UNRESOLVED.** No gate set. A deterministic applicability rule must be explicitly designed before `DB_VERIFICATION` may become mandatory.
+14. **Foundation v1 Required Conditions & The Checkpoint 6 Gate — RESOLVED (ADR-004 4.12, 4.13).**
+   - *Problem:* Checkpoint 3 implements six of the thirty-one declared transition conditions (§15 Checkpoint 3). Without a gate, the remaining Foundation v1-required conditions could be silently unenforced once the Kernel goes live.
+   - *Ruling:* `FOUNDATION_V1_REQUIRED_CONDITIONS` is **derived from the `TransitionCondition` entries attached to the transitions the approved vertical slice (§10.2) walks** — **24 of 31**. No separate checklist is authored. Checkpoint 6 may not operate against Foundation v1 until every required condition is either implemented by a Rule or satisfied by a proven domain invariant (§15 Checkpoint 6).
+   - *Consequence:* **All four `BLOCKED_CONDITIONS` are Foundation v1-required.** Items 15, 16, and 17 are therefore on the **critical path to Checkpoint 6**, not in a backlog.
+15. **Definition of "Implementation Task" — BLOCKED. Must not be silently decided.**
+   - *Problem:* §5.1 gates `IN_PROGRESS -> IN_VALIDATION` on `ALL_IMPLEMENTATION_TASKS_ACCEPTED`, but "implementation task" is undefined across Design Sessions 001–009, ADR-003, and this Blueprint. Inferring it from `capability != QA` would be inventing architecture.
+   - *Status:* **UNRESOLVED.** Classified `BLOCKED_CONDITIONS` (ADR-004 4.11). Foundation v1-required; blocks Checkpoint 6.
+16. **Feature-Level Mandatory Evidence Set — BLOCKED. Must not be silently decided.**
+   - *Problem:* §5.1 gates `IN_VALIDATION -> ACCEPTED` on `MANDATORY_EVIDENCE_PRESENT`, and Design Session 009 requires "mandatory QA evidence present", but no Feature-level required evidence set is defined anywhere. Design Session 005's standards are per-Worker-type.
+   - *Status:* **UNRESOLVED.** Classified `BLOCKED_CONDITIONS` (ADR-004 4.11). Foundation v1-required; blocks Checkpoint 6.
+17. **Reviewer Assignment & Routing Model — BLOCKED. Must not be silently decided.**
+   - *Problem:* §5.2 gates `SUBMITTED -> IN_REVIEW` on `REVIEWER_ASSIGNED` and describes "automatic routing to assigned Reviewer", but **no domain concept exists**: `Task` (§4.1 #3) carries no reviewer, and no routing or assignment model is defined.
+   - *Status:* **UNRESOLVED.** Classified `BLOCKED_CONDITIONS` (ADR-004 4.11). Foundation v1-required; blocks Checkpoint 6.
 
 ---
 
@@ -961,23 +1031,66 @@ The following were surfaced during Checkpoint 2. Item numbering is stable and is
 - Implement state machine graphs and transition precondition evaluators in `src/ai_engineering_os/state/`.
 - Write comprehensive unit tests verifying valid and invalid transitions.
 - **[ADR-003](../../adr/ADR-003.md) is authoritative for the Foundation v1 domain-model and lifecycle clarifications discovered during this checkpoint.**
-- **Checkpoint 2 revisit (ADR-003 3.11, 3.12) — performed when Checkpoint 3 begins, not inside Checkpoint 2's completed record:**
-  - `QADefect` gains its scope association (`scope_task_id` / `scope_feature_id`) and OS-side scope resolution (§4.1 #7).
-  - `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3).
-  - The Task state machine gains the originating-plan-`ACTIVE` precondition on `-> READY` (§5.2).
+- **Checkpoint 2 revisit (ADR-003 3.11, 3.12) — performed IN FULL as Checkpoint 3 Phase 0 (ADR-004 4.8), not inside Checkpoint 2's completed record:**
+  - `QADefect` gains its scope association (`scope_task_id` / `scope_feature_id`), with the cardinality rules of §4.1 #7: at most one may be set; **both-absent remains valid** and represents unresolved scope. OS-side scope resolution lives in the rule, not the model.
+  - `Task` gains `feature_plan_id` and `plan_definition_key` (§4.1 #3). **Both are required** (ADR-004 4.8).
+  - `TransitionCondition` relocates to the `domain` layer, with public re-exports preserved (§3, ADR-004 4.7).
+  - `ORIGINATING_PLAN_ACTIVE` is added to the condition vocabulary and declared on **both** Task `-> READY` edges (§5.2).
+  - **The `ORIGINATING_PLAN_ACTIVE` rule is NOT implemented here.** It remains deferred in `PENDING_RULE_EXPANSION`; enforcement sits with the Checkpoint 6 transition runner (ADR-003 3.12). This revisit records domain facts and state declarations required by already-approved decisions — **it is not permission to widen the Checkpoint 3 rule set.**
 
 ### Checkpoint 3: Rule & Policy Engine
-- Implement `RuleEngine` and composable rule evaluators in `src/ai_engineering_os/rules/`.
-- Implement `AuthorityRule`, `SystemEvidenceRule`, `SequentialDependencyRule`, and `QAInScopeZeroDefectRule`.
-- **`SystemEvidenceRule` must be keyed off `Task.capability` (ADR-003 3.7), not off `claim_type`.** Design Session 005 defines Evidence Standards per Worker type.
+
+**[ADR-004](../../adr/ADR-004.md) is authoritative for the Rule Engine architecture and the scope of this checkpoint.**
+
+Checkpoint 3 builds the **generic Rule Engine foundation and proves it against a small number of real OS rules.** It is deliberately **not** the complete rule library.
+
+**Phase 0 — Checkpoint 2 revisit, in full (ADR-004 4.8).** See §15 Checkpoint 2 above. Performed before any rule is written.
+
+**Phase 1 — the generic engine** in `src/ai_engineering_os/rules/`:
+- A single abstract `Rule` contract; rules are **explicit, strongly typed Python implementations** (ADR-004 4.1). **No JSON/YAML DSL, no configuration-driven rule language, no runtime expression evaluator, no LLM rule evaluation.**
+- **Hybrid evaluation** (ADR-004 4.2): every rule whose declared prerequisites held is evaluated; **evaluation never stops at the first failure**; independent failures aggregate; a rule is skipped **only** because a prerequisite it explicitly declared failed or was skipped, and skips cascade transitively.
+- **Deterministic, OS-owned ordering** (ADR-004 4.3): fixed stage order — 1 Actor/Authority, 2 State transition, 3 Plan/Dependencies, 4 Evidence, 5 Acceptance — with registry declaration order as the tie-break. **Agents never choose rule order; runtime configuration never reorders rules.** Stage 2 is declared and empty in Foundation v1.
+- **Typed, frozen `RuleContext`** of caller-supplied facts (ADR-004 4.4). **No database, session, repository, filesystem, network, clock, or random source.** Each rule declares the facts it requires; a missing required fact **fails closed** with a structured error rather than passing silently.
+- **Structured `RuleResult`** (ADR-004 4.5): stable `rule_id` and `code` vocabularies, human-readable `message`, typed ordered `details`, and statuses `PASSED` / `FAILED` / `SKIPPED`. **`NOT_APPLICABLE` is deliberately absent.** Aggregate evaluations additionally report conditions that were requested but have no registered rule.
+- **Pure, read-only rules** (ADR-004 4.6): no mutation, no persistence, no audit records, no events, no external I/O. Mutation, transaction, audit, and event publication belong to the Checkpoint 6 Kernel.
+- The **four-way condition classification** registry and the derived Checkpoint 6 gate set (ADR-004 4.11, 4.13).
+
+**Phase 2 — exactly six representative rules (ADR-004 4.10).** No others are implemented in this checkpoint:
+
+| Rule | Category | Condition | Edge |
+| :--- | :--- | :--- | :--- |
+| `worker_capability_matches` | Authority | `WORKER_CAPABILITY_MATCHES` | Task `READY -> ASSIGNED` |
+| `dependencies_accepted` | Plan / dependency | `DEPENDENCIES_ACCEPTED` | Task `CREATED` / `PENDING_DEPENDENCIES -> READY` |
+| `system_evidence_required` | Evidence | `MANDATORY_SYSTEM_EVIDENCE_ATTACHED` | Task `IN_PROGRESS -> SUBMITTED` |
+| `all_tasks_accepted` | Acceptance | `ALL_TASKS_ACCEPTED` | Feature `IN_VALIDATION -> ACCEPTED` |
+| `qa_final_pass_recorded` | Acceptance | `QA_FINAL_PASS_RECORDED` | Feature `IN_VALIDATION -> ACCEPTED` |
+| `qa_in_scope_zero_defects` | Acceptance | `ZERO_UNRESOLVED_IN_SCOPE_DEFECTS` | Feature `IN_VALIDATION -> ACCEPTED` |
+
+These six are the four rules originally named for this checkpoint (`AuthorityRule`, `SystemEvidenceRule`, `SequentialDependencyRule`, `QAInScopeZeroDefectRule`) plus the two acceptance rules that make hybrid evaluation demonstrable against real conditions. `qa_in_scope_zero_defects` declares `qa_final_pass_recorded` as its prerequisite; the other five are independent.
+
+- **`system_evidence_required` must be keyed off `Task.capability` (ADR-003 3.7), not off `claim_type`.** Design Session 005 defines Evidence Standards per Worker type.
+- **Evidence standards fail closed (ADR-004 4.9).** `BACKEND` requires `GIT_DIFF`, `TEST_OUTPUT`, and `API_RESPONSE`. **`FRONTEND` and `QA` standards are NOT invented**; a capability with no approved standard fails with the stable code `EVIDENCE_STANDARD_UNDEFINED`, never with an implicit pass. **`DB_VERIFICATION` is not in the deterministic mandatory set** and no applicability logic is invented (§14, items 12–13).
 - **Precondition — CLEARED.** §14 item 5 (in-scope defect identification) is resolved by ADR-003 3.11.
-- **`QAInScopeZeroDefectRule` evaluates derived scope (ADR-003 3.11).** It resolves each defect via `Defect -> Task -> Feature` (or `Defect -> Feature`) and counts only unresolved defects resolving to the Feature under acceptance. It **must never read a QA-supplied `in_scope` flag**, and it must reject a QA Final Pass carrying any scope-unresolved defect, naming the defect in the rejection.
-- Write unit tests verifying rule evaluation failures and success messages.
+- **`qa_in_scope_zero_defects` evaluates derived scope (ADR-003 3.11).** It resolves each defect via `Defect -> Task -> Feature` (or `Defect -> Feature`) and counts only unresolved defects resolving to the Feature under acceptance. It **must never read a QA-supplied `in_scope` flag**, and it must reject a QA Final Pass carrying any scope-unresolved defect, naming the defect in the rejection.
+
+**Phase 3 — tests.** Engine mechanics against stub rules; pass/fail/code/details coverage for all six rules; real-rule hybrid scenarios (independent aggregation, prerequisite skipping, unevaluated-condition reporting) and the full ADR-003 3.11 defect-scope matrix; architectural invariants proving `rules/` imports no SQLAlchemy, storage, repository, session, FastAPI, or network client, performs no runtime I/O, mutates nothing, and leaves **no `TransitionCondition` unaccounted for**.
+
+**Explicit rule expansion boundary (ADR-004 4.11).** Remaining conditions are never silently implemented. Every vocabulary entry is classified into exactly one of four registry constants, which **partition** the vocabulary:
+
+| Classification | Count at CP3 | Meaning |
+| :--- | :--- | :--- |
+| Implemented | 6 | A registered rule evaluates it today |
+| `PENDING_RULE_EXPANSION` | 17 | Computable now; **not yet written** — a scope decision |
+| `SATISFIED_BY_DOMAIN_INVARIANT` | 4 | Guaranteed by domain-model construction; enforcement discharged by pinning the guaranteeing validator instead of writing an unfalsifiable rule |
+| `BLOCKED_CONDITIONS` | 4 | Cannot be written without a Builder ruling or later-checkpoint machinery (§14, items 15–17) — an **owed decision** |
+
+**What Checkpoint 3 does NOT do.** No persistence, no events, no HTTP, no Kernel, no mutation, and **no context loader** — the component that reads facts from persistence into a `RuleContext` belongs to Checkpoint 6 on Checkpoint 4 repositories. It resolves no open question, invents no lifecycle state, and creates no authority. **D-1 (`BLOCKED`) and D-6 remain deferred and untouched.**
 
 ### Checkpoint 4: Database Persistence & Migrations
 - **Precondition:** §14 item 7 (Coordinator lifecycle) must be resolved before any `coordinators` or Domain Registry table is created.
 - **Constraint:** Append-only tables are insert-only (§7.1). `task_revisions` must have no mutable status column.
-- **Constraint (ADR-003 3.12):** `tasks` carries the originating-plan columns (`feature_plan_id`, `plan_definition_key`); QA defect rows carry the scope-association columns (ADR-003 3.11).
+- **Constraint (ADR-003 3.12, ADR-004 4.8):** `tasks` carries the originating-plan columns (`feature_plan_id`, `plan_definition_key`), both **NOT NULL**; QA defect rows carry the scope-association columns (ADR-003 3.11), both nullable, with at most one populated per row and **both-null permitted** to represent unresolved scope.
+- **Boundary (ADR-004 4.4).** The domain **fields** land at Checkpoint 3 Phase 0; their **columns** land here. Checkpoint 4 also owns the repositories that Checkpoint 6 will use to assemble a `RuleContext`; **Checkpoint 3 ships no context loader and no fact-fetching protocol**, so persistence never shapes the rule layer.
 - **Constraint (ADR-003 3.13):** **No** automatic migration, reassignment, or deletion of a superseded plan's Tasks may be implemented in any repository or migration.
 - Implement SQLAlchemy ORM models in `src/ai_engineering_os/storage/models/`.
 - Generate and apply baseline Alembic migration script.
@@ -990,7 +1103,32 @@ The following were surfaced during Checkpoint 2. Item numbering is stable and is
 - Write integration tests for event persistence and notification wake-up.
 
 ### Checkpoint 6: OS Kernel & Transactional Transition Runner
-- **Precondition — CLEARED.** §14 item 8 (Task instantiation timing) is resolved by ADR-003 3.12. The transition runner enforces the originating-plan-`ACTIVE` precondition on `-> READY`, and plan activation reconciles task definitions to Tasks (§5.4).
+
+> [!IMPORTANT]
+> **BLOCKING PRECONDITION — Foundation v1 Rule Coverage Gate (ADR-004 4.12, 4.13).**
+>
+> **The OS Kernel MUST NOT become operational against Foundation v1 while any required Foundation v1 transition condition lacks enforcement.**
+>
+> ```
+> Required Foundation v1 transition conditions
+>               |
+>    every required condition is either
+>    implemented by a Rule, or satisfied
+>    by a proven domain invariant
+>               |
+>         CP6 may proceed
+> ```
+>
+> `FOUNDATION_V1_REQUIRED_CONDITIONS` is **derived from the `TransitionCondition` entries attached to the transitions the approved vertical slice (§10.2) walks** — **24 of the 31 vocabulary entries**. No separate, arbitrary checklist is authored; if the slice changes, the set is re-derived rather than edited by hand. The seven non-required entries are the rework and multi-task edges the slice does not walk; they remain part of the architecture and are not withdrawn.
+>
+> **The governing invariant:** *no Foundation v1-required condition may be silently unenforced when the Kernel goes live.*
+>
+> **Status at the end of Checkpoint 3:** 6 required conditions implemented, 2 satisfied by domain invariant, **16 outstanding** (12 in `PENDING_RULE_EXPANSION`, 4 in `BLOCKED_CONDITIONS`). **The gate is expected to fail at that point, by design.**
+>
+> **All four `BLOCKED_CONDITIONS` are Foundation v1-required**, so §14 items 15, 16, and 17 — the definition of "implementation task", the Feature-level mandatory evidence set, and the Reviewer assignment model — are on the **critical path to this checkpoint**. They must not be silently decided here.
+
+- **Precondition — CLEARED.** §14 item 8 (Task instantiation timing) is resolved by ADR-003 3.12. The transition runner enforces the originating-plan-`ACTIVE` precondition on `-> READY` — implementing the `ORIGINATING_PLAN_ACTIVE` rule that Checkpoint 3 declared but deliberately deferred (§5.2, ADR-004 4.8) — and plan activation reconciles task definitions to Tasks (§5.4).
+- **Separation of concerns (ADR-004 4.7).** The state machine answers *"is this transition structurally defined, and may this initiator request it?"*; the Rule Engine answers *"are the conditions this edge declares satisfied by these facts?"*; **only the Kernel mutates state, records audit, and publishes events.** The Kernel assembles the `RuleContext` from Checkpoint 4 repositories; the Rule Engine never loads its own facts.
 - **Constraint (ADR-003 3.13):** On `ACTIVE -> SUPERSEDED` the runner performs **no** automatic Task migration, deletion, or halting. Disposition is Coordinator-initiated; its persisted record and any stop state are deferred (§14, item 11).
 - **Open (§14, item 9):** the Feature-level consequence of supersession remains unresolved and must not be silently decided here.
 - Implement `OSKernel` and `TransitionRunner` in `src/ai_engineering_os/core/`.

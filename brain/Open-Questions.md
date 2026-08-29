@@ -59,7 +59,7 @@ The exact structure has not yet been designed.
 
 ### What evidence is sufficient to prove work?
 
-Status: Open
+Status: Open. Narrowed 2026-08-25.
 
 Notes:
 
@@ -67,7 +67,14 @@ The system currently defines the acceptance flow.
 
 The exact evidence required by Backend, Frontend, QA, Review, and Coordinators remains undefined.
 
-This will become the focus of the next checkpoint.
+[ADR-004](../adr/ADR-004.md) 4.9 rules the OS behaviour when a standard is undefined; it does not define the missing standards.
+
+- Backend mandatory System Evidence is the Design Session 005 set, expressed as GIT_DIFF, TEST_OUTPUT, and API_RESPONSE.
+- FRONTEND and QA mandatory System Evidence standards are still undefined and were deliberately not invented.
+- A capability with no approved standard fails closed with the stable code EVIDENCE_STANDARD_UNDEFINED. An undefined standard is never treated as no evidence required.
+- DB_VERIFICATION is not part of the deterministic mandatory Checkpoint 3 evidence set. Design Session 005's "database verification when applicable" remains engineering judgement, and no applicability logic was invented.
+
+Both the FRONTEND / QA standards and a deterministic DB_VERIFICATION applicability rule remain Open. See Implementation Blueprint section 14, items 12 and 13.
 
 ### How should the Orchestrator's knowledge and context be provided?
 
@@ -97,6 +104,24 @@ Design Session 009 is silent on both.
 
 Relevant to Checkpoint 6.
 
+Unchanged by [ADR-004](../adr/ADR-004.md), which explicitly does not decide it. Still Open.
+
+### Which conditions cannot yet have a Rule?
+
+Status: Open. Raised 2026-08-25.
+
+Source: [ADR-004](../adr/ADR-004.md) 4.11, and Implementation Blueprint section 14, items 15 to 17.
+
+Notes:
+
+Three declared transition conditions cannot be evaluated deterministically because the architecture has not defined what they mean. They are classified BLOCKED_CONDITIONS and must not be silently decided during implementation.
+
+- ALL_IMPLEMENTATION_TASKS_ACCEPTED. "Implementation task" is undefined across Design Sessions 001 to 009, ADR-003, and the Blueprint.
+- MANDATORY_EVIDENCE_PRESENT at Feature acceptance. No Feature-level required evidence set exists; Design Session 005's standards are per Worker type.
+- REVIEWER_ASSIGNED. No domain concept exists. Task carries no reviewer and no routing model is defined.
+
+All three are Foundation v1 required conditions under [ADR-004](../adr/ADR-004.md) 4.13, so all three block Checkpoint 6 under the safety gate of [ADR-004](../adr/ADR-004.md) 4.12.
+
 ### Deferred capabilities recorded by ADR-003
 
 Status: Deferred, not rejected.
@@ -111,6 +136,8 @@ These remain part of the architecture of record. They are not implemented in Fou
 - D-4: Feature Plan supersession from DRAFT or READY. Not required by Foundation v1.
 - D-5: QA severity and priority classification taxonomy (Design Session 004). Not required by Foundation v1.
 - D-6: Task stop and abandon lifecycle, and the persisted record of a Coordinator disposition decision, including any recorded relationship between a superseded plan's Task and successor planned work (ADR-003 3.13). Must be designed explicitly before any post-supersession disposition is implemented.
+
+[ADR-004](../adr/ADR-004.md) changes none of these. D-1 and D-6 in particular remain deferred, and no rule, condition, or lifecycle state was added for either.
 
 ## Resolution Notes
 
