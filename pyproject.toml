@@ -85,6 +85,11 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 disallow_untyped_decorators = false
 plugins = ["pydantic.mypy"]
+# Checkpoint 4 adds tests/integration/conftest.py alongside tests/conftest.py.
+# Without explicit package bases mypy maps both to the module name "conftest".
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
 
 [[tool.mypy.overrides]]
 module = [
