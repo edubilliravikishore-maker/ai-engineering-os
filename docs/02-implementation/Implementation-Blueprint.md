@@ -149,7 +149,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 | `rules` | Deterministic policy and transition rule validation | Rule engine, rule contract, `RuleContext`, `RuleResult`, evidence validators, authority checkers, condition classification registry | State mutation, DB connection management, lifecycle graphs, **any dependency on `state`** | `domain` |
 | `core` | OS Kernel execution and orchestration | Transaction runner, command handlers, enforcement pipeline | Raw SQL queries, HTTP request parsing, agent generation | `domain`, `state`, `rules`, `events`, `storage` (interfaces) |
 | `events` | Event definitions, event store, and notification bus | Event models, event serializer, Postgres LISTEN/NOTIFY publisher/listener | Domain business rules, HTTP endpoint logic | `domain`, `storage` |
-| `storage` | Relational persistence and migrations | SQLAlchemy models, repositories, session management, Alembic migrations | Domain logic, agent execution, API schemas | `domain`, SQLAlchemy, Alembic |
+| `storage` | Relational persistence and migrations | SQLAlchemy models, domain&nbsp;&harr;&nbsp;row mappers, repositories, Unit of Work session management, persistence exceptions, Alembic migrations | Domain logic, agent execution, API schemas, **the business transaction boundary** (ADR-005 5.5), **generic CRUD or delete semantics** (ADR-005 5.4, 5.7), **any dependency on `rules`** | `domain`, SQLAlchemy, Alembic |
 | `api` | HTTP REST control plane | FastAPI routers, request/response schemas, auth/role extraction | Direct business logic, direct DB transactions (calls Kernel) | `core`, `domain`, FastAPI, Pydantic |
 | `client` | Provider-agnostic SDK for agents and tools | Typed HTTP client, request formatters, response parsers | OS internal state machine execution | `domain`, httpx / requests |
 
@@ -289,6 +289,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 #### 10. Event & State Transition Audit Record
 - **Event:** `id` (UUID), `event_type` (string), `aggregate_type` (string), `aggregate_id` (UUID), `actor_id` (UUID), `actor_role` (string), `payload` (JSONB), `occurred_at`.
 - **State Transition Audit:** `id` (UUID), `entity_type` (string), `entity_id` (UUID), `from_state` (string), `to_state` (string), `requested_by` (UUID), `decision` (`ALLOWED` vs `REJECTED`), `rejection_reasons` (list of strings), `timestamp`.
+- **Checkpoint Ownership (ADR-005 5.13):** **Both entities are persisted at Checkpoint 5, not Checkpoint 4.** `os_events` belongs with the event layer that writes it, and `state_transitions_audit` — which no checkpoint previously owned — is assigned to Checkpoint 5 alongside it. **Checkpoint 4 creates neither table, neither model, nor an event repository.**
 
 ---
 
@@ -520,13 +521,13 @@ Every significant OS action generates a structured domain event persisted synchr
 │                                                                          │
 │   AUTHORITATIVE CURRENT STATE                  APPEND-ONLY HISTORY       │
 │  ┌─────────────────────────────┐              ┌────────────────────────┐ │
-│  │ features                    │              │ os_events              │ │
-│  │ tasks                       │              │ state_transitions_audit│ │
-│  │ coordinators                │              │ task_revisions         │ │
-│  │ workers                     │              │ work_packages          │ │
-│  │ feature_plans               │              │ evidence_records       │ │
-│  └─────────────────────────────┘              │ qa_reports / defects   │ │
-│                                               │ decisions              │ │
+│  │ actors                      │              │ task_revisions         │ │
+│  │ features                    │              │ evidence_records       │ │
+│  │ feature_plans               │              │ qa_reports / defects   │ │
+│  │ tasks                       │              │ review_decisions       │ │
+│  │ work_packages (hybrid)      │              │ decisions / acks       │ │
+│  └─────────────────────────────┘              │ os_events         [CP5]│ │
+│                                               │ transitions_audit [CP5]│ │
 │                                               └────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -534,9 +535,23 @@ Every significant OS action generates a structured domain event persisted synchr
 1. **Authoritative State:** Relational tables holding the current, active status and relationships of living entities (`features.status`, `tasks.status`, `tasks.assigned_worker_id`).
 2. **Append-Only History:** Immutable records capturing the exact sequence of engineering actions, revisions, evidence, and audit decisions.
 3. **Insert-Only Enforcement (ADR-003 3.1):** Rows in the append-only tables are **inserted, never updated**. In particular, `task_revisions` rows carry no mutable status column; a Revision is never rewritten or re-marked once recorded. The active-revision pointer lives on `tasks.active_revision_number`, which is authoritative-state, not history.
+4. **Actor Persistence (ADR-005 5.1):** A single `actors` table carries `role` as a column. **No `coordinators` table and no Domain Registry persistence is created**, because ADR-003 3.10 forbids it until the Coordinator lifecycle is resolved (§14, item 7). The `coordinators` / `workers` split shown in earlier revisions of this diagram is **superseded**.
+5. **`work_packages` Is A Hybrid (ADR-005 5.8):** Earlier revisions of this diagram placed `work_packages` under append-only history, which contradicted the five-value OS projection ADR-003 3.5 requires. **That classification is amended.** A `DRAFT` Work Package remains editable; `SUBMITTED` is persisted as the durable record; **submitted content becomes immutable**; and the **already-approved lifecycle transitions remain the sole authority for status changes**. ADR-003 3.5 is unchanged.
+6. **Events And Transition Audit Land At Checkpoint 5 (ADR-005 5.13):** `os_events` and `state_transitions_audit` are marked `[CP5]` above. **Checkpoint 4 creates neither**, and no event repository. `state_transitions_audit`, which no checkpoint previously owned, is assigned to Checkpoint 5 (§15).
+7. **Enforcement Mechanism (ADR-005 5.8, 5.14):** Append-only is enforced **by construction** — no repository exposes an update path for a historical table (ADR-005 5.4, 5.7) — not by database trigger. This is a **recorded limitation**, not an independently enforced guarantee in the ADR-001 sense: code holding a raw session could still bypass it.
+8. **Optimistic-Lock Versions (ADR-005 5.6):** A version column exists on the authoritative-state tables only — `actors`, `features`, `feature_plans`, `tasks`, `work_packages`. Append-only tables carry none, because a row that is never updated cannot lose an update race.
+9. **Persistence Metadata Timestamps (ADR-005 5.9):** Every table carries database-generated persistence metadata timestamps. They are **separate from the domain timestamps**, are **never mapped into domain objects**, and **must not be used for ordering, filtering, or authoritative QA-result selection** (ADR-004 4.15, §14 item 18).
 
 ### 7.2 Transactional Transition Boundary & Invariant
 All OS state transitions are protected by explicit PostgreSQL ACID transactions.
+
+> [!IMPORTANT]
+> **Transaction ownership and concurrency control (ADR-005 5.5, 5.6).**
+>
+> - **The service/use-case layer owns the transaction boundary.** Repositories perform persistence operations and use the session supplied to them; they never open a session, and never call `commit()` or `rollback()`. The `storage` layer owns the Unit of Work mechanism (§2.2); the **Checkpoint 6 Kernel is the transaction owner**, and it does not exist until that checkpoint.
+> - **Concurrency control is optimistic locking, not `SELECT FOR UPDATE`.** ADR-005 5.6 supersedes the §14 item 1 recommendation. A version column exists on the authoritative-state tables only. Concurrent modification is **detected and reported** as `ConcurrencyConflictError`, never silently overwritten.
+> - **The conceptual snippet below reflects this ruling.** The *Validation-First* sequence it depicts — evaluate before mutating, record the rejection durably, commit — is unchanged and remains authoritative.
+> - **Repositories translate infrastructure errors** into `NotFoundError`, `ConcurrencyConflictError`, and `PersistenceError` (ADR-005 5.12). These carry no HTTP status codes; the transport mapping belongs to Checkpoint 7.
 
 **Core Invariant:**
 > **Rejected transition = no target-state mutation + durable rejection record.**
@@ -555,55 +570,77 @@ To guarantee that the rejection record is never lost due to a rolled-back state 
    - The transaction is **committed**, followed by a post-commit `pg_notify()`.
 
 ```python
-# Conceptual Transactional Pattern in OS Kernel (Validation-First)
-async with db.transaction() as session:
-    # 1. Acquire row lock on target entity
-    task = await session.get_for_update(TaskModel, task_id)
-    
-    # 2. Evaluate State Machine & Rule Engine BEFORE any mutation
-    validation_result = rule_engine.validate_transition(
-        task=task,
+# Conceptual Transactional Pattern in OS Kernel (Validation-First, optimistic locking)
+# The Kernel owns the transaction boundary; repositories use the session it supplies
+# and never commit (ADR-005 5.5). Repositories return frozen domain objects,
+# never ORM models (ADR-005 5.11), so nothing below holds a live database row.
+async with unit_of_work() as uow:
+    # 1. Load the domain object. No row lock is taken: the version read here is the
+    #    token the commit in step 6 will check (ADR-005 5.6).
+    task = await uow.tasks.get_by_id(task_id)        # raises NotFoundError if absent
+
+    # 2. Evaluate State Machine & Rule Engine BEFORE any mutation.
+    #    The state machine answers "is this transition defined, and may this initiator
+    #    request it?"; the Rule Engine answers "are the declared conditions satisfied
+    #    by these facts?" (ADR-004 4.7). The Kernel's context loader assembles the
+    #    RuleContext from repositories; the Rule Engine never loads its own facts.
+    evaluation = evaluate_transition(
+        machine=TASK_STATE_MACHINE,
+        current_state=task.status,
         target_state=TaskStatus.SUBMITTED,
-        payload=work_package_payload,
-        actor=current_actor
+        initiator=current_actor.role,
+        context=await load_rule_context(uow, task=task, work_package=work_package),
     )
-    
-    if not validation_result.is_valid:
-        # State remains unchanged in task.status (IN_PROGRESS)
-        # Durably record the rejection audit record and event in this committed transaction
-        await session.record_rejection(
-            entity_type="Task",
-            entity_id=task.id,
-            from_state=task.status,
-            attempted_state=TaskStatus.SUBMITTED,
-            actor=current_actor,
-            reasons=validation_result.errors
+
+    if not evaluation.is_allowed:
+        # State remains unchanged (task is frozen; nothing was mutated).
+        # Durably record the rejection audit record and event in this committed transaction.
+        await uow.transition_audit.add(
+            transition_rejection_record(
+                entity_type="Task",
+                entity_id=task.id,
+                from_state=task.status,
+                attempted_state=TaskStatus.SUBMITTED,
+                requested_by=current_actor.id,
+                reasons=evaluation.rejection_reasons,
+            )
         )
-        await session.commit()
-        raise TransitionRejectedException(errors=validation_result.errors)
-    
-    # 3. Apply state mutation ONLY after validation passes
-    task.status = TaskStatus.SUBMITTED
-    
-    # 4. Insert immutable child records (Work Package, Evidence, Revision)
-    revision = TaskRevisionModel(...)
-    session.add(revision)
-    
-    # 5. Insert event into os_events
-    event = EventModel(
-        event_type="WorkPackageSubmitted",
-        aggregate_type="Task",
-        aggregate_id=task.id,
-        payload=validation_result.event_payload
+        await uow.events.add(state_transition_rejected_event(task, evaluation))
+        await uow.commit()
+        raise TransitionRejectedException(reasons=evaluation.rejection_reasons)
+
+    # 3. Apply the state change ONLY after validation passes. Domain models are frozen,
+    #    so this produces a new object rather than mutating the loaded one.
+    submitted_task = task.with_status(TaskStatus.SUBMITTED).with_active_revision(
+        revision.revision_number
     )
-    session.add(event)
-    
-    # 6. Commit transaction (PostgreSQL guarantees ACID durability)
-    await session.commit()
+
+    # 4. Insert immutable child records (Revision, Work Package, Evidence).
+    #    Identities already exist — they were generated by the application (ADR-005 5.9)
+    #    so these records can reference each other before anything is written.
+    await uow.task_revisions.add(revision)
+    await uow.work_packages.add(work_package)
+    for record in system_evidence:
+        await uow.evidence.add(record)
+    await uow.flush()                                 # resolve FKs; nothing committed yet
+
+    # 5. Stage the authoritative-state update and the event.
+    await uow.tasks.save(submitted_task)              # carries the version read in step 1
+    event = work_package_submitted_event(submitted_task, work_package)
+    await uow.events.add(event)
+
+    # 6. Commit. The UPDATE in step 5 matches on the version read in step 1: if another
+    #    transaction changed this Task in between, no row matches and the repository
+    #    raises ConcurrencyConflictError. Nothing is silently overwritten, and the whole
+    #    transaction rolls back (ADR-005 5.6).
+    await uow.commit()
 
 # 7. Post-commit notification (LISTEN/NOTIFY)
 await notification_bus.emit(channel="task_events", payload={"event_id": event.id})
 ```
+
+> [!NOTE]
+> **Illustrative only.** The names above depict the transactional shape, not a fixed API. The `os_events` and `state_transitions_audit` writes land at Checkpoint 5 ([ADR-005](../../adr/ADR-005.md) 5.13); `load_rule_context` and the transition runner land at Checkpoint 6 ([ADR-004](../../adr/ADR-004.md) 4.4). **Checkpoint 4 builds only the repositories and the session scope this pattern consumes.**
 
 ---
 
@@ -842,20 +879,36 @@ AI-Engineering-OS/
 │       ├── storage/            # Persistence & data access
 │       │   ├── __init__.py                                          [IMPLEMENTED — CP1]
 │       │   ├── database.py     # SQLAlchemy engine & sessionmaker    [IMPLEMENTED — CP1]
+│       │   ├── errors.py       # Persistence exception hierarchy     [PLANNED — CP4]
+│       │   ├── unit_of_work.py # Session scope; owns no boundary     [PLANNED — CP4]
 │       │   ├── models/         # SQLAlchemy ORM table definitions
 │       │   │   ├── __init__.py # Declarative Base re-export          [IMPLEMENTED — CP1]
+│       │   │   ├── actor.py                                         [PLANNED — CP4]
 │       │   │   ├── feature.py                                       [PLANNED — CP4]
+│       │   │   ├── plan.py                                          [PLANNED — CP4]
 │       │   │   ├── task.py                                          [PLANNED — CP4]
 │       │   │   ├── work_package.py                                  [PLANNED — CP4]
 │       │   │   ├── evidence.py                                      [PLANNED — CP4]
 │       │   │   ├── qa.py                                            [PLANNED — CP4]
 │       │   │   ├── decision.py                                      [PLANNED — CP4]
-│       │   │   └── event.py                                         [PLANNED — CP4]
+│       │   │   └── event.py    # os_events, transitions audit        [PLANNED — CP5]
+│       │   ├── mappers/        # Explicit domain <-> row translation [PLANNED — CP4]
+│       │   │   ├── __init__.py
+│       │   │   └── <one module per persisted entity>
 │       │   └── repositories/   # Entity repositories & query helpers [PLANNED — CP4]
 │       │       ├── __init__.py
+│       │       ├── base.py     # Reusable mechanics only; no delete
+│       │       ├── actor_repo.py
 │       │       ├── feature_repo.py
+│       │       ├── plan_repo.py
 │       │       ├── task_repo.py
-│       │       └── event_repo.py
+│       │       ├── task_revision_repo.py
+│       │       ├── work_package_repo.py
+│       │       ├── evidence_repo.py
+│       │       ├── qa_repo.py
+│       │       ├── review_decision_repo.py
+│       │       ├── decision_repo.py
+│       │       └── event_repo.py                                    [PLANNED — CP5]
 │       │
 │       ├── api/                # FastAPI HTTP REST control plane              [PLANNED — CP7]
 │       │   ├── __init__.py
@@ -901,10 +954,10 @@ AI-Engineering-OS/
 ### Directory Rationale
 - `src/ai_engineering_os/domain`: Kept isolated from I/O so domain rules and schemas are testable in microseconds without database mocks.
 - `src/ai_engineering_os/state` & `rules`: Encapsulates OS deterministic behavior separate from web frameworks or ORMs. Both depend on `domain` only; **`rules` must not depend on `state`** (§3, ADR-004 4.7).
-- `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details.
+- `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details. **ADR-005 5.11: ORM models never cross the repository boundary** — repositories return domain objects, and the Rule Engine and every higher layer must never receive a SQLAlchemy model. `mappers/` performs the translation explicitly; `errors.py` translates infrastructure failures (ADR-005 5.12); `unit_of_work.py` provides the session scope but owns no business transaction boundary (ADR-005 5.5).
 - `src/ai_engineering_os/api`: Provides clean HTTP contract without business logic pollution.
 - `tests/`: Separated into `unit`, `integration`, and `e2e` for fast local feedback loops.
-- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. It is synchronized with the repository at the end of Checkpoint 3 and must be re-synchronized as later checkpoints land.
+- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. **`[IMPLEMENTED]` markers are synchronized with the repository at the end of Checkpoint 3**; no Checkpoint 4 code exists yet. The `[PLANNED — CP4]` and `[PLANNED — CP5]` entries reflect the scope fixed by [ADR-005](../../adr/ADR-005.md). Markers must be re-synchronized as later checkpoints land.
 
 ---
 
@@ -913,7 +966,7 @@ AI-Engineering-OS/
 | Test Category | Target Scope | Key Verification Goals |
 | :--- | :--- | :--- |
 | **Domain Unit Tests** | `domain/`, `state/`, `rules/` | - Pydantic model validation and serialization.<br>- State machine valid vs. invalid transitions.<br>- Rule evaluators (evidence missing, role mismatch, unresolved blockers). |
-| **Persistence Integration Tests** | `storage/` + PostgreSQL | - CRUD operations on relational models.<br>- Database transaction rollback on error.<br>- Immutability of revisions and Work Packages.<br>- Alembic migrations up/down consistency. |
+| **Persistence Integration Tests** | `storage/` + PostgreSQL | - CRUD operations on relational models.<br>- Database transaction rollback on error.<br>- Immutability of revisions, and of **submitted** Work Package content (ADR-005 5.8).<br>- Alembic migrations up/down consistency. |
 | **Event & Bus Integration Tests** | `events/` + PostgreSQL | - Events appended to `os_events` in sequential order.<br>- `LISTEN/NOTIFY` wakes asynchronous listeners reliably.<br>- Reconnection / state recovery from unhandled events. |
 | **OS Enforcement Integration Tests** | `core/` + `rules/` + DB | - Worker cannot transition task to `SUBMITTED` without System Evidence.<br>- Coordinator cannot transition Feature to `ACCEPTED` without QA Final Pass.<br>- Unauthorized actor role transitions are deterministically blocked with 403/422. |
 | **First Vertical Slice E2E Test** | `tests/e2e/test_first_vertical_slice.py` | Complete 11-step execution from Feature Creation to Final Acceptance, verifying state persistence, rule gating, event publication, and history reconstruction. |
@@ -954,9 +1007,11 @@ Checkpoint 8: Typed Client SDK & E2E Vertical Slice Test
 
 The following are genuine technical implementation questions for Foundation v1 (not architectural re-openings):
 
-1. **Database Row-Level Locking vs Optimistic Locking:**
+1. **Database Row-Level Locking vs Optimistic Locking — RESOLVED 2026-09-02 (ADR-005 5.6).**
    - *Question:* Should high-concurrency state transitions rely primarily on pessimistic locking (`SELECT FOR UPDATE`) or optimistic concurrency control with an integer version column (`version_id`)?
-   - *Recommendation for v1:* Use `SELECT FOR UPDATE` inside short database transactions. It is deterministic, robust for low-to-medium initial concurrency, and avoids retry storms.
+   - *Original recommendation for v1 — SUPERSEDED:* Use `SELECT FOR UPDATE` inside short database transactions.
+   - *Ruling ([ADR-005](../../adr/ADR-005.md) 5.6):* **Optimistic locking.** Concurrent modification must be **detected and reported**, never silently overwritten. A version column exists on the authoritative-state tables only — `actors`, `features`, `feature_plans`, `tasks`, `work_packages` — because a row that is never updated cannot lose an update race. A conflict raises `ConcurrencyConflictError` and the caller decides the business response.
+   - *Consequence:* The §7.2 conceptual snippet has been **rewritten** to depict version-checked commit rather than a pessimistic row lock; the Validation-First sequence it illustrates is unchanged. **No Checkpoint 2 domain model is modified**: the version is a property of the stored row, tracked inside the session and never exposed across the repository boundary (ADR-005 5.11).
 2. **Evidence Storage & Payload Sizing Strategy:**
    - *Requirement:* The architecture strictly requires durable, retrievable, and integrity-verifiable evidence records.
    - *Implementation Strategy for v1:* The threshold for storing evidence inline in PostgreSQL (`TEXT`/`JSONB`) versus offloading to external/file storage is an initial implementation and configuration parameter (`MAX_INLINE_EVIDENCE_BYTES`, defaulting to 5MB) rather than an unchangeable architectural constraint. Payloads exceeding the configured threshold store a durable URI reference accompanied by an authoritative SHA-256 integrity checksum in PostgreSQL. This threshold can be adjusted based on operational benchmarks without changing the domain architecture.
@@ -1032,7 +1087,10 @@ Surfaced by the Checkpoint 3 implementation audit and ruled on by the Builder on
 19. **Referential Validation Of A Feature Scope Association — UNRESOLVED. No gate set on Checkpoint 3.**
    - *Problem:* The seven-fact `RuleContext` (ADR-004 4.4) supplies only the Feature under acceptance, so an existing **different** Feature and a **nonexistent** Feature identifier are indistinguishable to a rule.
    - *Ruling (ADR-004 4.16):* **No `known_feature_ids` fact is added** and no lookup is invented. Both cases are treated as out of scope under ADR-004 4.14. A dangling **Task** association *is* detected, because the Task facts needed to check it are supplied; the asymmetry follows directly from the approved fact set.
-   - *Status:* **UNRESOLVED. Must be addressed when the persistence / context-loader layer is designed** (Checkpoints 4 / 6). **Checkpoint 3 does not claim to validate Feature-reference existence.**
+   - *Status:* **RESOLVED IN PART 2026-09-02 (ADR-005 5.14). Residual belongs to Checkpoint 6.**
+   - *Ruling ([ADR-005](../../adr/ADR-005.md) 5.14):* The persistence half is closed by construction. `qa_defects.scope_task_id` and `scope_feature_id` carry **referential foreign keys**, so a **nonexistent** identifier is unstorable. Both columns remain **nullable**, **both-null remains valid** as the unresolved-scope path, and both-set remains rejected (ADR-004 4.8). Only *unresolved* scope and *different-Feature* scope — out of scope and non-blocking per ADR-004 4.14 — remain representable.
+   - *Unchanged:* **[ADR-004](../../adr/ADR-004.md) 4.16's ruling about the rule layer stands.** The seven-fact `RuleContext` gains nothing, **no `known_feature_ids` fact is added**, and the rule layer still makes no existence claim. **Checkpoint 3 does not claim to validate Feature-reference existence**, and Checkpoint 4 does not give it that ability — it removes the invalid data instead.
+   - *Residual — relevant to Checkpoint 6:* whether the context loader should verify a Feature association against loaded facts remains a Checkpoint 6 design question. No gate is set.
 
 ---
 
@@ -1106,18 +1164,35 @@ These six are the four rules originally named for this checkpoint (`AuthorityRul
 **What Checkpoint 3 does NOT do.** No persistence, no events, no HTTP, no Kernel, no mutation, and **no context loader** — the component that reads facts from persistence into a `RuleContext` belongs to Checkpoint 6 on Checkpoint 4 repositories. It resolves no open question, invents no lifecycle state, and creates no authority. **D-1 (`BLOCKED`) and D-6 remain deferred and untouched.**
 
 ### Checkpoint 4: Database Persistence & Migrations
-- **Precondition:** §14 item 7 (Coordinator lifecycle) must be resolved before any `coordinators` or Domain Registry table is created.
+
+**[ADR-005](../../adr/ADR-005.md) is authoritative for the persistence architecture and the scope of this checkpoint.**
+
+Checkpoint 4 builds the durable store and the repositories that Checkpoint 6 will read facts from. **It stores and retrieves. It evaluates no rule, validates no transition, and advances no state.**
+
+- **Precondition:** §14 item 7 (Coordinator lifecycle) must be resolved before any `coordinators` or Domain Registry table is created. **Satisfied by ADR-005 5.1**, which creates a single `actors` table and no registry.
 - **Constraint:** Append-only tables are insert-only (§7.1). `task_revisions` must have no mutable status column.
 - **Constraint (ADR-003 3.12, ADR-004 4.8):** `tasks` carries the originating-plan columns (`feature_plan_id`, `plan_definition_key`), both **NOT NULL**; QA defect rows carry the scope-association columns (ADR-003 3.11), both nullable, with at most one populated per row and **both-null permitted** to represent unresolved scope.
-- **Boundary (ADR-004 4.4).** The domain **fields** land at Checkpoint 3 Phase 0; their **columns** land here. Checkpoint 4 also owns the repositories that Checkpoint 6 will use to assemble a `RuleContext`; **Checkpoint 3 ships no context loader and no fact-fetching protocol**, so persistence never shapes the rule layer.
+- **Boundary (ADR-004 4.4).** The domain **fields** land at Checkpoint 3 Phase 0; their **columns** land here. Checkpoint 4 also owns the repositories that Checkpoint 6 will use to assemble a `RuleContext`; **Checkpoint 3 ships no context loader and no fact-fetching protocol**, so persistence never shapes the rule layer. **Checkpoint 4 ships no context loader either** — that component belongs to Checkpoint 6.
 - **Constraint (ADR-003 3.13):** **No** automatic migration, reassignment, or deletion of a superseded plan's Tasks may be implemented in any repository or migration.
-- Implement SQLAlchemy ORM models in `src/ai_engineering_os/storage/models/`.
-- Generate and apply baseline Alembic migration script.
-- Implement repository classes (`FeatureRepository`, `TaskRepository`, `EventRepository`).
-- Write persistence integration tests.
+
+**Scope, per [ADR-005](../../adr/ADR-005.md):**
+
+- **ORM models** for fourteen tables: `actors`, `features`, `feature_plans`, `plan_task_definitions`, `tasks`, `task_dependencies`, `task_revisions`, `work_packages`, `evidence_records`, `qa_reports`, `qa_defects`, `review_decisions`, `decisions`, `decision_acknowledgements` (ADR-005 5.1, 5.2, 5.8).
+- **Explicit domain &harr; row mappers** (ADR-005 5.3, 5.11). Reconstruction runs every domain validator; a row that cannot form a valid domain object **fails** rather than being returned invalid or silently repaired.
+- **A generic base repository plus domain-specific repositories** (ADR-005 5.4). The base carries reusable mechanics only; every domain query lives in its own repository. **No generic CRUD surface, and no `delete()` at all** (ADR-005 5.7).
+- **A Unit of Work session scope** (ADR-005 5.5). Repositories use the supplied session and never commit. **The transaction owner is the Checkpoint 6 Kernel and is not built here**; integration tests stand in as the caller.
+- **Optimistic-lock versions** on the five authoritative-state tables (ADR-005 5.6).
+- **Persistence exception hierarchy** in `storage/errors.py` — `NotFoundError`, `ConcurrencyConflictError`, `PersistenceError` (ADR-005 5.12). **Not** added to `domain/errors.py`, whose recorded scope excludes persistence concerns.
+- **Alembic migrations grouped by coherent schema change** (ADR-005 5.10). **`0001_baseline` is left untouched** — it has been applied wherever `tests/integration/test_migrations.py` has run, and an applied migration is immutable. New revisions follow it.
+- **Database constraints for fundamental data integrity and evidence-based indexes** (ADR-005 5.14). Statuses are `VARCHAR` + `CHECK`, not native `ENUM`. **No deferred state — D-1 `BLOCKED` foremost — is added to any constraint.**
+- **Persistence integration tests** and **architectural boundary tests**: no `rules` &harr; `storage` import in either direction, no ORM type crossing the repository boundary, no repository ordering or filtering by a persistence metadata timestamp, and the Checkpoint 3 suite still running **without a database**.
+
+**What Checkpoint 4 does NOT do.** No Kernel, no transaction runner, and **no context loader** (Checkpoint 6). No service or use-case class owning a business transaction (Checkpoint 6). **No `os_events`, no `state_transitions_audit`, no event model, and no event repository** (Checkpoint 5, ADR-005 5.13). No HTTP layer (Checkpoint 7). **No new rule, transition condition, `RuleContext` fact, or lifecycle state.** No reviewer routing, QA authoritative-result selection, or Feature supersession lifecycle. **D-1 and D-6 remain deferred and untouched**, and no generic delete exists that could implement either by accident.
 
 ### Checkpoint 5: Event Store & Notification Bus
+- **Scope correction (ADR-005 5.13):** this checkpoint owns **both** `os_events` **and** `state_transitions_audit` — their tables, models, migrations, and repositories. §11 previously marked the event model `[PLANNED — CP4]` and §15 Checkpoint 4 previously listed an `EventRepository`; **both are superseded.** `state_transitions_audit`, which no checkpoint previously owned, is assigned here.
 - Implement `EventModel` and append-only event recording in `src/ai_engineering_os/events/`.
+- Implement the `state_transitions_audit` record required by the §7.2 Validation-First invariant, so a rejected transition's durable audit entry has somewhere to land before the Checkpoint 6 runner needs it.
 - Implement PostgreSQL `LISTEN/NOTIFY` emitter and async subscriber.
 - Write integration tests for event persistence and notification wake-up.
 

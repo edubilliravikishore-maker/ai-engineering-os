@@ -142,23 +142,9 @@ Nothing may be invented before this is designed: no recency ordering, no sequenc
 
 Must be designed before Checkpoint 6, which owns the context loader that decides which QA Reports a rule sees.
 
+Reinforced 2026-09-02 by [ADR-005](../adr/ADR-005.md) 5.9. Checkpoint 4 adds database-generated persistence metadata timestamps to every table. These are metadata only. They are not mapped into domain objects, and repositories must not use them for ordering, filtering, or authoritative QA-result selection. Storing when a row landed is permitted; using it to decide which QA Report is authoritative is not. ADR-005 adds a prohibition, not an answer, and this question stays Open.
+
 Known limitation while this stays open: the correctness of ZERO_UNRESOLVED_IN_SCOPE_DEFECTS depends entirely on the caller supplying the right reports. Checkpoint 3 proves the ADR-003 3.11 derivation, not the end-to-end acceptance guarantee. This is recorded as a limitation, not claimed as enforcement.
-
-### Can the OS verify that a defect's Feature association points at a real Feature?
-
-Status: Open. Raised 2026-08-29 by the Checkpoint 3 audit.
-
-Source: [ADR-004](../adr/ADR-004.md) 4.16, and Implementation Blueprint section 14.3, item 19.
-
-Notes:
-
-The approved seven-fact RuleContext supplies only the Feature under acceptance. An existing different Feature and a nonexistent Feature identifier are therefore indistinguishable to a rule, and both are treated as out of scope.
-
-No known_feature_ids fact was added and no lookup was invented. Checkpoint 3 does not claim to validate Feature-reference existence.
-
-A dangling Task association is detected, because the Task facts needed to check it are supplied. The asymmetry follows directly from the approved fact set rather than from an oversight.
-
-Must be addressed when the persistence and context-loader layer is designed, at Checkpoints 4 and 6. No gate is set on Checkpoint 3.
 
 ### Deferred capabilities recorded by ADR-003
 
@@ -177,9 +163,29 @@ These remain part of the architecture of record. They are not implemented in Fou
 
 [ADR-004](../adr/ADR-004.md) changes none of these. D-1 and D-6 in particular remain deferred, and no rule, condition, or lifecycle state was added for either.
 
+[ADR-005](../adr/ADR-005.md) changes none of these either. D-1 is admitted by no status constraint. D-2 and D-3 are respected by the single actors table, which stores identity only and creates no Domain Registry. D-6 is foreclosed rather than implemented: there is no generic delete, foreign keys RESTRICT, and no ABANDONED, CANCELLED, or STOPPED state exists.
+
 ## Resolution Notes
 
 Questions removed from the list above, with the decision that resolved each one.
+
+### Can the OS verify that a defect's Feature association points at a real Feature?
+
+Status: Resolved in part 2026-09-02. Residual belongs to Checkpoint 6.
+
+Resolved by: [ADR-005](../adr/ADR-005.md) 5.14.
+
+Notes:
+
+The persistence half is closed by construction rather than by a rule. The defect scope columns carry referential foreign keys, so a nonexistent identifier cannot be stored at all.
+
+Both columns remain nullable and both-null remains valid, so the unresolved-scope path recorded by ADR-004 4.8 stays representable and testable. Both-set remains rejected.
+
+Only unresolved scope and different-Feature scope remain representable. A different-Feature association is out of scope and non-blocking under ADR-004 4.14.
+
+[ADR-004](../adr/ADR-004.md) 4.16's ruling about the rule layer is unchanged. The seven-fact RuleContext gains nothing, no known_feature_ids fact was added, and the rule layer still makes no existence claim. Checkpoint 4 does not give Checkpoint 3 that ability; it removes the invalid data instead.
+
+Residual: whether the Checkpoint 6 context loader should verify a Feature association against loaded facts remains a Checkpoint 6 design question. No gate is set.
 
 ### Does a QA defect need an explicit in-scope marker?
 
