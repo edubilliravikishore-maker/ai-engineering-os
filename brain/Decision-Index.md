@@ -61,6 +61,8 @@ Index project decisions when they are recorded.
   - [6.8 Initiator Attribution And The Null Actor ID](../adr/ADR-006.md#68-initiator-attribution-and-the-null-actor-id) — reuses the existing `Initiator = ActorRole | SystemActor`; actor id is nullable with a `CHECK` permitting null **only** for `OS`. **No sentinel id, no OS row in `actors`, and `ActorRole` is unchanged.**
   - [6.9 The Bus Receives A Session](../adr/ADR-006.md#69-the-bus-receives-a-session-the-kernel-owns-the-call) — the emit takes the caller's session and the **Checkpoint 6 Kernel** owns the call, implementing ADR-004 4.7 and avoiding the circular `storage` to `events` dependency section 2.2 forbids. **Not enforced by construction; a required check at Checkpoint 6.**
   - [6.10 Reaffirmed, Not Newly Decided](../adr/ADR-006.md#610-reaffirmed-not-newly-decided) — PostgreSQL is the durable store and LISTEN/NOTIFY only a wake-up (ADR-002); no version column, no update, and no delete on either append-only table; **no new runtime dependency and no message broker.**
+  - **Amendment — Checkpoint 5 Implementation Ruling, 2026-09-04.** One Builder ruling made while implementing this checkpoint; §6.1 to §6.10 stand unchanged.
+    - [6.11 The Event Vocabulary Belongs To The Domain Layer](../adr/ADR-006.md#611-the-event-vocabulary-belongs-to-the-domain-layer) — `EventType`, `TransitionOutcome`, `OSEvent`, and `TransitionAuditRecord` live in `domain/`; `events/` keeps the envelope, channel, emitter, and subscriber. Resolves a circular dependency the Blueprint section 11 layout requires, **the same way ADR-004 4.7 resolved it for the condition vocabulary**. A placement ruling only: no field, value, or invariant changes, and no `AggregateType` vocabulary is invented.
 
 ## Placeholders
 
