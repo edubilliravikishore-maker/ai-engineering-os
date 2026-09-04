@@ -1,0 +1,83 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "The room",
+      "x": 0,
+      "y": 0,
+      "w": 1120,
+      "h": 760
+    },
+    {
+      "file": "Moment.dc.html",
+      "title": "When work comes back",
+      "x": 1200,
+      "y": 0,
+      "w": 1120,
+      "h": 760
+    },
+    {
+      "file": "Pieces.dc.html",
+      "title": "Meet the Bits",
+      "x": 0,
+      "y": 850,
+      "w": 1120,
+      "h": 620
+    },
+    {
+      "file": "Blocky.dc.html",
+      "title": "The cast \u2014 dress code",
+      "x": 1200,
+      "y": 850,
+      "w": 1180,
+      "h": 780
+    }
+  ],
+  "annotations": [
+    {
+      "id": "note-cast",
+      "x": 0,
+      "y": -300,
+      "w": 470,
+      "text": "THE BITS\n\nOne round little body, big eyes, blush, a bobbing antenna. Everyone is the same shape \u2014 the colour and the one thing they carry tells you who they are.\n\nGlasses = the boss. Clipboard = hands out work. Headphones = heads-down building. Magnifier = checks it. Checklist = tests it.\n\n\"Bits\" is a placeholder name. Rename them anything."
+    },
+    {
+      "id": "note-room",
+      "x": 1200,
+      "y": -300,
+      "w": 470,
+      "text": "SAME ROOM, DIFFERENT MOMENT\n\nLeft board: a good day. Bo messages Ash that Task B is ready, Pip is at his desk, Tam is off getting coffee.\n\nRight board: Ash couldn't check Task B \u2014 code but no test run, no API response. Too important for a message, so Ash gets up and carries it back to Bo. Bo's desk lights up orange.\n\nWarm orange, never alarm red. Nobody is in trouble."
+    },
+    {
+      "id": "note-corners",
+      "x": 0,
+      "y": 1520,
+      "w": 470,
+      "text": "THE COFFEE CORNER AND THE SOFA\n\nThese are the only places where nothing official happens \u2014 which is exactly why they earn their space. Somebody is always over there, and it makes the room feel like a place rather than a diagram.\n\nTam is on a break in the left board and misses the whole drama in the right one."
+    },
+    {
+      "id": "note-ask",
+      "x": 600,
+      "y": 1520,
+      "w": 470,
+      "text": "STILL YOUR CALL\n\n1. Bright enough? I stayed just under fully-saturated so the room reads calm and the Bits pop.\n\n2. Should Reviewer and QA get cabins, or stay out on the floor with the workers?\n\n3. Want more life \u2014 a printer, a window, a whiteboard, a second plant?\n\n4. Do the Bits need to be even rounder or bigger?"
+    },
+    {
+      "id": "note-cast-dress",
+      "x": 2460,
+      "y": 850,
+      "w": 470,
+      "text": "SEVEN PEOPLE, SEVEN HAIRCUTS\n\nOriginal blocky design \u2014 not LEGO's actual minifigure, which is theirs.\n\nSeniority is the dress code. Rex: three-piece and pocket square. Mina: tailored blazer, gold hoops. Ash: knit vest over an oxford. Juno: all-black turtleneck.\n\nThe new joiners: Bo in a hoodie and chunky white sneakers, Pip in a denim jacket over a graphic tee, Tam in a bomber and cargos.\n\nCheck the ceiling row underneath. From above the suits vanish and only the HAIR is left, so that is where I put the real difference \u2014 slicked, bun, side part, red-streaked bob, high-top curls, beanie, bleached crop."
+    },
+    {
+      "id": "note-next",
+      "x": 2460,
+      "y": 1280,
+      "w": 470,
+      "text": "NEXT STEP\n\nThe room boards still have the round Bits in them. Say the word and I will swap this cast in everywhere \u2014 the room, the desks, the walking, the messages all stay exactly as they are.\n\nBefore I do: anything to change on an outfit or a haircut? Easier to fix one person here than seven across three boards."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

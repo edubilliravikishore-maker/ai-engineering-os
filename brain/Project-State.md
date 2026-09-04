@@ -48,6 +48,7 @@ Checkpoint definitions live in [Implementation-Blueprint §15](../docs/02-implem
 | `events/` | CP5 | Notification envelope and single channel, in-transaction `pg_notify` emitter, drain-then-listen subscriber |
 | `core/` | CP6 | Does not exist yet (Kernel, TransitionRunner) |
 | `api/` | CP7 | Does not exist yet |
+| `ui/` | — | **Accepted prototype, parked.** Self-contained, imports nothing, reads nothing yet. See [ui/README.md](../ui/README.md) |
 
 ## Known Blocker Ahead — Do Not Walk Into This Blind
 
@@ -79,6 +80,17 @@ into [ADR-006](../adr/ADR-006.md) and neither is a defect:
 
 A third, inherited from ADR-005 5.8: append-only is enforced **by construction** — no repository
 exposes an update path — not by database trigger. Code holding a raw session could still bypass it.
+
+## The UI
+
+Settled 2026-09-04 and **parked at the Builder's instruction.** A 3D office built in
+pure CSS 3D — [ui/](../ui/README.md), with every decision and trade-off recorded in
+[ui/DESIGN-DECISIONS.md](../ui/DESIGN-DECISIONS.md) and the rejected directions kept
+in [ui/explorations/](../ui/explorations/README.md).
+
+It cannot go live until Checkpoints 6 and 7 exist to feed it. It is still useful
+before then: [ADR-006](../adr/ADR-006.md) 6.5 deferred the per-event-type payload
+schemas because no consumer existed, and this is that consumer.
 
 ## Related
 

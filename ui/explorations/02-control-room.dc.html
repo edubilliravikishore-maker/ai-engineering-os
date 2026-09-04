@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: oklch(0.78 0.14 165); }
+    a:hover { color: oklch(0.88 0.14 165); }
+  </style>
+</helmet>
+
+<div style="width: 1040px; height: 700px; box-sizing: border-box; background: oklch(0.19 0.012 260); font-family: 'JetBrains Mono', ui-monospace, monospace; color: oklch(0.88 0.01 260); display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="display: flex; align-items: center; gap: 16px; padding: 15px 22px; border-bottom: 1px solid oklch(0.3 0.015 260); background: oklch(0.165 0.012 260);">
+    <div style="font-size: 11px; letter-spacing: 0.16em; color: oklch(0.72 0.13 165);">C — CONTROL ROOM</div>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-size: 11px; color: oklch(0.6 0.012 260);">feature/password-reset</div>
+    <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: oklch(0.72 0.13 165);">
+      <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="currentColor"/></svg>seq 4131
+    </div>
+  </div>
+
+  <div style="background: oklch(0.32 0.13 30); display: flex; align-items: center; gap: 13px; padding: 11px 22px;">
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="oklch(0.86 0.14 35)" stroke-width="1.8" style="flex-shrink: 0;"><path d="M9 1.8 L16.8 15.6 H1.2 Z"/><path d="M9 6.6v3.6M9 12.8v.5"/></svg>
+    <div style="font-size: 12px; font-weight: 500; color: oklch(0.92 0.08 40); letter-spacing: 0.02em;">TRANSITION REFUSED — Task B · IN_PROGRESS ⇸ SUBMITTED</div>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-size: 11px; color: oklch(0.82 0.09 40);">MISSING_SYSTEM_EVIDENCE</div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <div style="flex-grow: 1; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0;">
+
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+
+        <div style="background: oklch(0.235 0.014 260); border: 1px solid oklch(0.31 0.015 260); border-radius: 3px; padding: 12px 13px; display: flex; flex-direction: column; gap: 9px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="oklch(0.7 0.13 165)"/></svg>
+            <div style="font-size: 10.5px; letter-spacing: 0.11em; color: oklch(0.78 0.012 260);">COORDINATOR</div>
+            <div style="flex-grow: 1;"></div>
+            <div style="font-size: 10px; color: oklch(0.55 0.012 260);">1 held</div>
+          </div>
+          <div style="background: oklch(0.28 0.014 260); border-radius: 2px; padding: 8px 9px; font-size: 11.5px;">Task C
+            <span style="color: oklch(0.6 0.012 260);">· email delivery</span>
+            <div style="font-size: 10px; color: oklch(0.7 0.13 165); margin-top: 4px;">READY</div>
+          </div>
+        </div>
+
+        <div style="background: oklch(0.245 0.03 30); border: 1px solid oklch(0.45 0.13 32); border-radius: 3px; padding: 12px 13px; display: flex; flex-direction: column; gap: 9px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="oklch(0.68 0.18 35)"/></svg>
+            <div style="font-size: 10.5px; letter-spacing: 0.11em; color: oklch(0.86 0.07 35);">WORKER · backend-1</div>
+            <div style="flex-grow: 1;"></div>
+            <div style="font-size: 10px; color: oklch(0.72 0.1 35);">2 held</div>
+          </div>
+          <div style="background: oklch(0.3 0.06 32); border-radius: 2px; padding: 8px 9px; font-size: 11.5px;">Task B
+            <span style="color: oklch(0.72 0.03 35);">· POST /password-reset</span>
+            <div style="font-size: 10px; color: oklch(0.8 0.13 38); margin-top: 4px;">REVISION_REQUIRED</div>
+          </div>
+          <div style="background: oklch(0.27 0.014 260); border-radius: 2px; padding: 7px 9px; font-size: 11px; color: oklch(0.62 0.012 260);">Task A · token table
+            <div style="font-size: 10px; color: oklch(0.6 0.1 165); margin-top: 3px;">ACCEPTED</div>
+          </div>
+        </div>
+
+        <div style="background: oklch(0.215 0.012 260); border: 1px solid oklch(0.28 0.015 260); border-radius: 3px; padding: 12px 13px; display: flex; flex-direction: column; gap: 9px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="oklch(0.4 0.012 260)"/></svg>
+            <div style="font-size: 10.5px; letter-spacing: 0.11em; color: oklch(0.6 0.012 260);">REVIEWER</div>
+            <div style="flex-grow: 1;"></div>
+            <div style="font-size: 10px; color: oklch(0.45 0.012 260);">idle</div>
+          </div>
+          <div style="font-size: 10.5px; color: oklch(0.42 0.012 260); padding: 10px 0;">no queue</div>
+        </div>
+
+        <div style="background: oklch(0.215 0.012 260); border: 1px solid oklch(0.28 0.015 260); border-radius: 3px; padding: 12px 13px; display: flex; flex-direction: column; gap: 9px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="oklch(0.4 0.012 260)"/></svg>
+            <div style="font-size: 10.5px; letter-spacing: 0.11em; color: oklch(0.6 0.012 260);">QA</div>
+            <div style="flex-grow: 1;"></div>
+            <div style="font-size: 10px; color: oklch(0.45 0.012 260);">idle</div>
+          </div>
+          <div style="font-size: 10.5px; color: oklch(0.42 0.012 260); padding: 10px 0;">no queue</div>
+        </div>
+
+      </div>
+
+      <div style="background: oklch(0.215 0.012 260); border: 1px solid oklch(0.28 0.015 260); border-radius: 3px; padding: 12px 13px;">
+        <div style="font-size: 10px; letter-spacing: 0.14em; color: oklch(0.55 0.012 260); margin-bottom: 10px;">GATE — WHY IT WAS REFUSED</div>
+        <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
+          <div style="display: flex; gap: 10px; align-items: center;"><span style="color: oklch(0.7 0.13 165);">PASS</span><span style="color: oklch(0.6 0.012 260);">worker_capability_matches</span></div>
+          <div style="display: flex; gap: 10px; align-items: center;"><span style="color: oklch(0.7 0.13 165);">PASS</span><span style="color: oklch(0.6 0.012 260);">dependencies_accepted</span></div>
+          <div style="display: flex; gap: 10px; align-items: flex-start;"><span style="color: oklch(0.72 0.18 35);">FAIL</span><div><span style="color: oklch(0.86 0.06 35);">system_evidence_required</span><div style="color: oklch(0.62 0.09 35); font-size: 10.5px; margin-top: 3px;">GIT_DIFF ok · TEST_OUTPUT missing · API_RESPONSE missing</div></div></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div style="width: 292px; flex-shrink: 0; border-left: 1px solid oklch(0.3 0.015 260); background: oklch(0.175 0.012 260); padding: 16px 16px; display: flex; flex-direction: column; gap: 9px;">
+      <div style="font-size: 10px; letter-spacing: 0.14em; color: oklch(0.55 0.012 260);">EVENT STREAM</div>
+      <div style="display: flex; flex-direction: column; gap: 5px; font-size: 10.5px; line-height: 1.45;">
+        <div style="display: flex; gap: 8px; padding: 6px 8px; background: oklch(0.3 0.09 32); border-radius: 2px;"><span style="color: oklch(0.62 0.06 35);">4131</span><span style="color: oklch(0.88 0.09 38);">StateTransitionRejected</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4130</span><span style="color: oklch(0.72 0.012 260);">EvidenceAttached</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4129</span><span style="color: oklch(0.72 0.012 260);">TaskStarted</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4128</span><span style="color: oklch(0.72 0.012 260);">TaskAssigned</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4127</span><span style="color: oklch(0.72 0.012 260);">StateTransitionAllowed</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4126</span><span style="color: oklch(0.72 0.012 260);">QAReportSubmitted</span></div>
+        <div style="display: flex; gap: 8px; padding: 5px 8px;"><span style="color: oklch(0.48 0.012 260);">4125</span><span style="color: oklch(0.72 0.012 260);">ReviewCompleted</span></div>
+      </div>
+      <div style="flex-grow: 1;"></div>
+      <div style="border-top: 1px solid oklch(0.28 0.015 260); padding-top: 10px; font-size: 9.5px; color: oklch(0.5 0.012 260); line-height: 1.5;">you are watching from where the OS sits.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

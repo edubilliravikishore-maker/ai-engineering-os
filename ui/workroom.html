@@ -1,0 +1,489 @@
+<meta charset="utf-8">
+<title>The Workroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Outfit:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  --stage-1:#e7e3da; --stage-2:#d3cec2;
+  --ink:#25242a; --ink-soft:#5d5a63; --ink-faint:#8b8792;
+  --panel:rgba(255,255,255,.72); --panel-line:rgba(37,36,42,.14);
+  --hud-shadow:0 1px 2px rgba(37,36,42,.08),0 8px 26px rgba(37,36,42,.10);
+
+  --floor:#c9a97e; --floor-line:rgba(90,62,32,.16);
+  --rug:#b8734f;
+  --wall:#efe9dd; --wall-2:#e3dbcb;
+  --desk:#b3855a; --desk-2:#8f6a45;
+  --screen:#2d3140; --screen-lit:#8fd0c8;
+  --plant:#5f9e63; --pot:#c07a55;
+  --sofa:#c96a56; --table:#b3855a;
+  --machine:#3b3540; --mug:#f3efe6;
+
+  --amber:#e0952f; --teal:#2f8ba0; --plum:#7a4b8e;
+  --moss:#3f8a5f; --rose:#c0567e; --violet:#7b6bd6;
+  --skin-1:#e8c49a; --skin-2:#c79466; --skin-3:#f0d4b4; --skin-4:#a97247;
+  --hair-1:#2a2119; --hair-2:#3a2a20; --hair-3:#7a5233; --hair-4:#e8d18a;
+
+  --alert:#d4642f; --ok:#3f8a5f; --note:#3b6fb8;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --stage-1:#191821; --stage-2:#0f0e15;
+    --ink:#efecf4; --ink-soft:#b0acbb; --ink-faint:#7e7a8a;
+    --panel:rgba(30,29,39,.78); --panel-line:rgba(239,236,244,.14);
+    --hud-shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+  }
+}
+:root[data-theme="dark"]{
+  --stage-1:#191821; --stage-2:#0f0e15;
+  --ink:#efecf4; --ink-soft:#b0acbb; --ink-faint:#7e7a8a;
+  --panel:rgba(30,29,39,.78); --panel-line:rgba(239,236,244,.14);
+  --hud-shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; min-height:100vh; overflow:hidden;
+  background:radial-gradient(120% 100% at 50% 8%, var(--stage-1), var(--stage-2));
+  color:var(--ink); font-family:Outfit,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- HUD ---------- */
+.hud{position:fixed;inset:0;pointer-events:none;z-index:20}
+.hud > *{pointer-events:auto}
+
+.topbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:14px;padding:18px 22px}
+.mark{font-family:'Bricolage Grotesque',system-ui,sans-serif;font-weight:700;font-size:19px;letter-spacing:-.02em}
+.chip{
+  font-size:12px;font-weight:600;padding:5px 11px;border-radius:100px;
+  background:var(--panel);border:1px solid var(--panel-line);backdrop-filter:blur(10px);
+  box-shadow:var(--hud-shadow)
+}
+.spacer{flex:1}
+.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:7px;vertical-align:1px}
+@media (prefers-reduced-motion:no-preference){ .pulse{animation:blink 2.4s ease-in-out infinite} }
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+.ticker{
+  position:absolute;left:22px;bottom:22px;width:284px;padding:14px 15px;border-radius:16px;
+  background:var(--panel);border:1px solid var(--panel-line);backdrop-filter:blur(12px);
+  box-shadow:var(--hud-shadow)
+}
+.ticker h2{margin:0 0 10px;font-size:10px;letter-spacing:.16em;font-weight:600;color:var(--ink-faint);text-transform:uppercase}
+.log{display:flex;flex-direction:column;gap:7px;font-family:'DM Mono',ui-monospace,monospace;font-size:11.5px;line-height:1.35}
+.log div{display:flex;gap:9px;opacity:0;transform:translateY(4px);transition:opacity .5s,transform .5s}
+.log div.on{opacity:1;transform:none}
+.log .seq{color:var(--ink-faint);font-variant-numeric:tabular-nums}
+.log .bad{color:var(--alert);font-weight:500}
+.log .good{color:var(--ok)}
+
+.camera{position:absolute;right:22px;bottom:22px;display:flex;gap:7px}
+.camera button{
+  font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);
+  padding:8px 13px;border-radius:100px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--panel-line);backdrop-filter:blur(12px);
+  box-shadow:var(--hud-shadow);transition:transform .15s
+}
+.camera button:hover{transform:translateY(-1px)}
+.camera button[aria-pressed="true"]{background:var(--ink);color:var(--stage-1);border-color:transparent}
+.camera button:focus-visible{outline:2px solid var(--note);outline-offset:2px}
+
+
+/* ---------- 3D ---------- */
+.stage{position:fixed;inset:0;display:grid;place-items:center;perspective:1500px;perspective-origin:50% 50%}
+.world{
+  position:relative;width:900px;height:620px;transform-style:preserve-3d;
+  transform:translate(var(--ox),var(--oy)) scale(var(--zoom)) rotateX(var(--tilt)) rotateZ(var(--spin));
+  transition:transform .62s cubic-bezier(.22,.9,.24,1);
+  will-change:transform
+}
+.obj{position:absolute;left:0;top:0;transform-style:preserve-3d;transform:translate3d(var(--x),var(--y),var(--z,0px))}
+.obj.move{transition:transform 1.5s cubic-bezier(.45,.05,.3,1)}
+
+.f{position:absolute;left:0;top:0;transform-origin:0 0;background:var(--c);backface-visibility:visible}
+.top{width:var(--w);height:var(--d);transform:translateZ(var(--h))}
+.so{width:var(--w);height:var(--h);transform:translateY(var(--d)) rotateX(90deg);filter:brightness(.82)}
+.no{width:var(--w);height:var(--h);transform:rotateX(90deg);filter:brightness(.9)}
+.ea{width:var(--h);height:var(--d);transform:translateX(var(--w)) rotateY(-90deg);filter:brightness(.68)}
+.we{width:var(--h);height:var(--d);transform:rotateY(-90deg);filter:brightness(.74)}
+
+.floor{
+  position:absolute;left:0;top:0;width:900px;height:620px;border-radius:10px;
+  background:
+    repeating-linear-gradient(90deg,transparent 0 78px,var(--floor-line) 78px 79px),
+    repeating-linear-gradient(0deg,transparent 0 78px,var(--floor-line) 78px 79px),
+    var(--floor);
+  box-shadow:0 0 90px rgba(0,0,0,.3)
+}
+.rug{position:absolute;border-radius:8px;background:var(--rug);opacity:.5;transform:translateZ(.4px)}
+.shadow{position:absolute;border-radius:50%;background:rgba(60,40,20,.24);filter:blur(5px);transform:translateZ(.6px)}
+
+/* billboards */
+.bb{
+  position:absolute;transform-origin:50% 100%;
+  transform:translate3d(var(--x),var(--y),var(--z)) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt))) translate(-50%,-100%);
+  transition:opacity .45s, transform .62s cubic-bezier(.22,.9,.24,1)
+}
+.tag{
+  font-size:11px;font-weight:600;white-space:nowrap;padding:4px 10px;border-radius:100px;
+  background:var(--panel);border:1px solid var(--panel-line);color:var(--ink);
+  backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.16)
+}
+.bubble{
+  max-width:240px;padding:10px 13px;border-radius:14px;font-size:12.5px;font-weight:600;line-height:1.4;
+  background:#fffdf8;color:#2f2b26;border:2px solid var(--note);
+  box-shadow:0 6px 18px rgba(0,0,0,.28);opacity:0
+}
+.bubble.show{opacity:1}
+.bubble.alert{border-color:var(--alert)}
+.bubble .why{display:block;margin-top:5px;font-weight:500;font-size:11.5px;color:#6d6459}
+.bubble::after{
+  content:"";position:absolute;left:50%;bottom:-7px;width:11px;height:11px;margin-left:-5px;
+  background:#fffdf8;border-right:2px solid var(--note);border-bottom:2px solid var(--note);transform:rotate(45deg)
+}
+.bubble.alert::after{border-color:var(--alert)}
+
+@media (prefers-reduced-motion:reduce){
+  .obj.move,.world,.bb{transition-duration:.01ms}
+}
+</style>
+
+<div class="stage">
+  <div class="world" id="world" style="--tilt:54deg;--spin:-22deg;--zoom:1;--ox:-35px;--oy:-40px">
+    <div class="floor"></div>
+    <div class="rug" style="left:690px;top:300px;width:190px;height:190px"></div>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="topbar">
+    <div class="mark">The Workroom</div>
+    <div class="chip">feature · password reset</div>
+    <div class="spacer"></div>
+    <div class="chip"><span class="pulse"></span><span id="status">everyone's in</span></div>
+  </div>
+
+  <div class="ticker">
+    <h2>What just happened</h2>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="camera" id="cam">
+    <button data-tilt="76" data-spin="0" data-zoom="0.94" data-ox="0" data-oy="15">Overhead</button>
+    <button data-tilt="54" data-spin="-22" data-zoom="1" data-ox="-35" data-oy="-40" aria-pressed="true">Angled</button>
+    <button data-tilt="28" data-spin="-12" data-zoom="0.82" data-ox="-23" data-oy="-12">Eye level</button>
+  </div>
+</div>
+
+<script>
+const world = document.getElementById('world');
+const NS = 'http://www.w3.org/1999/xhtml';
+
+/* ---- box builder: five painted faces, top brightest ---- */
+function box(p, {x, y, z = 0, w, d, h, c, cls = ''}) {
+  const o = document.createElement('div');
+  o.className = 'obj ' + cls;
+  o.style.cssText = `--x:${x}px;--y:${y}px;--z:${z}px`;
+  for (const f of ['top', 'so', 'no', 'ea', 'we']) {
+    const el = document.createElement('div');
+    el.className = 'f ' + f;
+    el.style.cssText = `--w:${w}px;--d:${d}px;--h:${h}px;--c:${c}`;
+    o.appendChild(el);
+  }
+  (p || world).appendChild(o);
+  return o;
+}
+function shadow(x, y, w, h) {
+  const s = document.createElement('div');
+  s.className = 'shadow';
+  s.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+  world.appendChild(s);
+  return s;
+}
+const V = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---- the room ---- */
+const WALL = V('--wall'), WALL2 = V('--wall-2');
+// outer walls (north + west only, so the room stays open to the camera)
+box(null, {x: 0, y: 0, w: 900, d: 10, h: 74, c: WALL});
+box(null, {x: 0, y: 0, w: 10, d: 620, h: 74, c: WALL2});
+
+/* cabins &mdash; half-height partitions so you can see in */
+function cabin(x, y, w, d, tone) {
+  box(null, {x, y, w, d: 8, h: 52, c: tone});
+  box(null, {x, y, w: 8, d, h: 52, c: tone});
+  box(null, {x, y: y + d - 8, w, d: 8, h: 52, c: tone});
+  box(null, {x: x + w - 8, y, w: 8, d: d * 0.34, h: 52, c: tone});
+}
+cabin(40, 40, 220, 210, WALL);
+cabin(40, 320, 220, 210, WALL);
+
+/* desks + screens */
+const DESK = V('--desk'), SCREEN = V('--screen');
+function desk(x, y) {
+  box(null, {x, y, w: 150, d: 76, h: 30, c: DESK});
+  box(null, {x: x + 52, y: y + 14, z: 30, w: 46, d: 8, h: 26, c: SCREEN});
+  box(null, {x: x + 46, y: y + 46, z: 30, w: 58, d: 20, h: 3, c: '#9a8c78'});
+}
+desk(80, 110); desk(80, 390);          // cabins
+desk(330, 90); desk(330, 370);          // Bo, Pip
+desk(560, 90); desk(560, 370);          // Ash, Juno
+
+/* plants */
+function plant(x, y) {
+  box(null, {x, y, w: 26, d: 26, h: 22, c: V('--pot')});
+  box(null, {x: x + 3, y: y + 3, z: 22, w: 20, d: 20, h: 34, c: V('--plant')});
+}
+plant(285, 40); plant(285, 560); plant(860, 250);
+
+/* coffee corner */
+box(null, {x: 700, y: 40, w: 170, d: 60, h: 34, c: DESK});
+box(null, {x: 714, y: 52, z: 34, w: 34, d: 34, h: 44, c: V('--machine')});
+box(null, {x: 766, y: 62, z: 34, w: 14, d: 14, h: 14, c: V('--mug')});
+box(null, {x: 790, y: 62, z: 34, w: 14, d: 14, h: 14, c: V('--mug')});
+box(null, {x: 760, y: 150, w: 74, d: 74, h: 30, c: V('--table')});
+
+/* sofa + coffee table */
+box(null, {x: 700, y: 320, w: 170, d: 30, h: 46, c: V('--sofa')});
+box(null, {x: 700, y: 350, w: 170, d: 62, h: 22, c: V('--sofa')});
+box(null, {x: 720, y: 430, w: 120, d: 52, h: 20, c: V('--table')});
+
+/* ---- people: dressed, and no two haircuts alike ----
+   Heights stack: shoes 0-5, legs 5-19, torso 19-40, head 40-49, hair 49-up.
+   Seen from the ceiling the tailoring vanishes, so the hair carries the identity. */
+function hairstyle(inner, style, c, accent) {
+  const X = 2, Y = 1, W = 20, D = 18, Z = 49;
+  if (style === 'slick') {                                   // Rex — swept back, greying
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 7, c});
+    box(inner, {x: X, y: Y, z: 43, w: 2.5, d: D, h: 7, c: accent});
+    box(inner, {x: X + W - 2.5, y: Y, z: 43, w: 2.5, d: D, h: 7, c: accent});
+  } else if (style === 'bun') {                              // Mina — high bun
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 7, c});
+    box(inner, {x: X + 6, y: Y - 3, z: Z + 7, w: 9, d: 9, h: 9, c});
+  } else if (style === 'part') {                             // Ash — side part
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 6, c});
+    box(inner, {x: X, y: Y, z: Z + 6, w: 9, d: D, h: 3.5, c});
+  } else if (style === 'bob') {                              // Juno — blunt bob, one red panel
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 7, c});
+    box(inner, {x: X - 1.5, y: Y, z: 40, w: 3, d: D, h: 11, c});
+    box(inner, {x: X + W - 1.5, y: Y, z: 40, w: 3, d: D, h: 11, c: accent});
+  } else if (style === 'curls') {                            // Bo — high-top curls
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 4, c});
+    box(inner, {x: X + 1, y: Y + 2, z: Z + 4, w: 8, d: 7, h: 7, c});
+    box(inner, {x: X + 10, y: Y + 1, z: Z + 4, w: 8, d: 8, h: 9, c});
+    box(inner, {x: X + 5, y: Y + 9, z: Z + 4, w: 9, d: 7, h: 8, c});
+  } else if (style === 'beanie') {                           // Pip — pulled-down beanie
+    box(inner, {x: X - 1, y: Y - 1, z: Z - 3, w: W + 2, d: D + 2, h: 12, c});
+    box(inner, {x: X - 2, y: Y - 2, z: Z - 4, w: W + 4, d: D + 4, h: 4, c: accent});
+  } else {                                                   // Tam — bleached crop
+    box(inner, {x: X, y: Y, z: Z, w: W, d: D, h: 5, c});
+  }
+}
+
+function person(s) {
+  const o = document.createElement('div');
+  o.className = 'obj move';
+  o.style.cssText = `--x:${s.x}px;--y:${s.y}px`;
+  world.appendChild(o);
+  const inner = document.createElement('div');
+  inner.style.cssText = 'position:absolute;transform-style:preserve-3d';
+  o.appendChild(inner);
+
+  box(inner, {x: 2, y: 2, w: 9, d: 15, h: 5, c: s.shoe});      // shoes
+  box(inner, {x: 13, y: 2, w: 9, d: 15, h: 5, c: s.shoe});
+  box(inner, {x: 3, y: 4, z: 5, w: 8, d: 12, h: 14, c: s.legs});
+  box(inner, {x: 13, y: 4, z: 5, w: 8, d: 12, h: 14, c: s.legs});
+
+  const torso = box(inner, {x: 0, y: 2, z: 19, w: 24, d: 16, h: 21, c: s.top});
+  if (s.shirt) box(inner, {x: 8, y: 17, z: 21, w: 8, d: 2, h: 17, c: s.shirt});
+  if (s.tie)   box(inner, {x: 10.5, y: 18.5, z: 21, w: 3, d: 2, h: 14, c: s.tie});
+  if (s.hood)  box(inner, {x: 1, y: -1, z: 36, w: 22, d: 7, h: 8, c: s.hood});   // hood down the back
+  if (s.pocket) box(inner, {x: 5, y: 17, z: 21, w: 14, d: 2, h: 7, c: s.pocket});
+  if (s.band)  box(inner, {x: 0, y: 2, z: 19, w: 24, d: 16, h: 4, c: s.band});   // bomber waistband
+
+  const sleeve = s.sleeve || s.top;
+  const armL = box(inner, {x: -7, y: 4, z: 22, w: 7, d: 12, h: 15, c: sleeve});
+  const armR = box(inner, {x: 24, y: 4, z: 22, w: 7, d: 12, h: 15, c: sleeve});
+  box(inner, {x: -7, y: 5, z: 22, w: 7, d: 10, h: 4, c: s.skin});                // hands
+  box(inner, {x: 24, y: 5, z: 22, w: 7, d: 10, h: 4, c: s.skin});
+
+  box(inner, {x: 2, y: 1, z: 40, w: 20, d: 18, h: 9, c: s.skin});                // head
+  if (s.glasses) box(inner, {x: 3, y: 18.4, z: 43, w: 18, d: 1.6, h: 3.5, c: s.glasses});
+  if (s.cans) {                                                                  // headphones
+    box(inner, {x: 0, y: 5, z: 41, w: 3, d: 10, h: 8, c: s.cans});
+    box(inner, {x: 21, y: 5, z: 41, w: 3, d: 10, h: 8, c: s.cans});
+    box(inner, {x: 0, y: 7, z: 55, w: 24, d: 5, h: 3, c: s.cans});
+  }
+  hairstyle(inner, s.hairStyle, s.hairC, s.accent);
+
+  return {el: o, shadow: shadow(s.x - 4, s.y + 2, 34, 22), armL, armR, torso, id: s.id, sitting: true};
+}
+
+const CAST = [
+  {id: 'rex',  x: 138, y: 165, skin: '#e8c49a', legs: '#2b2933', shoe: '#1c1b22',
+   top: '#3b3848', shirt: '#f2efe8', tie: '#8e3b46',
+   hairStyle: 'slick', hairC: '#332a20', accent: '#b7b0a6'},
+
+  {id: 'mina', x: 138, y: 445, skin: '#c79466', legs: '#2f3440', shoe: '#1f232c',
+   top: '#2f8ba0', shirt: '#f2efe8',
+   hairStyle: 'bun', hairC: '#33241c'},
+
+  {id: 'ash',  x: 622, y: 148, skin: '#c79466', legs: '#8a7a5f', shoe: '#6b4a34',
+   top: '#3f8a5f', sleeve: '#b9cfe0', shirt: '#dceaf3', glasses: '#33313a',
+   hairStyle: 'part', hairC: '#3c2b20'},
+
+  {id: 'juno', x: 622, y: 428, skin: '#e8c49a', legs: '#7a4b8e', shoe: '#f0ece4',
+   top: '#26242c',
+   hairStyle: 'bob', hairC: '#241d1a', accent: '#c0442f'},
+
+  {id: 'bo',   x: 392, y: 148, skin: '#a97247', legs: '#4a5570', shoe: '#f4f1ea',
+   top: '#e0952f', hood: '#c67f22', pocket: '#c67f22', cans: '#33313a',
+   hairStyle: 'curls', hairC: '#1f1a15'},
+
+  {id: 'pip',  x: 392, y: 428, skin: '#f0d4b4', legs: '#8fa0bd', shoe: '#2a2830',
+   top: '#4a6fa8', shirt: '#eeeae0',
+   hairStyle: 'beanie', hairC: '#4f8a5e', accent: '#3b6b47'},
+
+  {id: 'tam',  x: 790, y: 128, skin: '#f0d4b4', legs: '#7e8b6e', shoe: '#eae7de',
+   top: '#7b6bd6', shirt: '#eeeae0', band: '#6152bd',
+   hairStyle: 'crop', hairC: '#e8d18a'}
+];
+const P = {};
+CAST.forEach(c => P[c.id] = person(c));
+
+/* name tags float above heads and always face you */
+function billboard(cls, x, y, z) {
+  const b = document.createElement('div');
+  b.className = 'bb';
+  b.style.cssText = `--x:${x}px;--y:${y}px;--z:${z}px`;
+  const inner = document.createElement('div');
+  inner.className = cls;
+  b.appendChild(inner);
+  world.appendChild(b);
+  return {wrap: b, node: inner};
+}
+const TAGS = {};
+[['rex', 'Rex'], ['mina', 'Mina'], ['bo', 'Bo'], ['pip', 'Pip'], ['ash', 'Ash'], ['juno', 'Juno'], ['tam', 'Tam']]
+  .forEach(([id, name]) => {
+    const c = CAST.find(k => k.id === id);
+    const t = billboard('tag', c.x + 12, c.y + 10, 78);
+    t.node.textContent = name;
+    TAGS[id] = t;
+  });
+
+const speech = billboard('bubble', 0, 0, 116);
+
+/* ---- moving someone ---- */
+function moveTo(id, x, y) {
+  const p = P[id];
+  p.el.style.setProperty('--x', x + 'px');
+  p.el.style.setProperty('--y', y + 'px');
+  p.shadow.style.left = (x - 4) + 'px';
+  p.shadow.style.top = (y + 2) + 'px';
+  const t = TAGS[id];
+  t.wrap.style.setProperty('--x', (x + 12) + 'px');
+  t.wrap.style.setProperty('--y', (y + 10) + 'px');
+}
+function say(id, text, why, alert) {
+  const c = P[id].el;
+  const x = parseFloat(c.style.getPropertyValue('--x'));
+  const y = parseFloat(c.style.getPropertyValue('--y'));
+  speech.wrap.style.setProperty('--x', (x + 12) + 'px');
+  speech.wrap.style.setProperty('--y', (y + 10) + 'px');
+  speech.node.className = 'bubble show' + (alert ? ' alert' : '');
+  speech.node.innerHTML = text + (why ? `<span class="why">${why}</span>` : '');
+}
+const hush = () => speech.node.classList.remove('show');
+
+/* ---- typing: small, constant, alive ---- */
+let t0 = performance.now();
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function tick(now) {
+  const t = (now - t0) / 1000;
+  for (const c of CAST) {
+    const p = P[c.id];
+    if (!p.sitting) continue;
+    const s = Math.sin(t * 7 + c.x) * 2.4;
+    p.armL.style.transform = `translate3d(-7px,${4 + s}px,22px)`;
+    p.armR.style.transform = `translate3d(24px,${4 - s}px,22px)`;
+    p.torso.style.transform = `translate3d(0px,2px,${19 + Math.sin(t * 1.6 + c.y) * 0.8}px)`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!reduced) requestAnimationFrame(tick);
+
+/* ---- the log ---- */
+const logEl = document.getElementById('log');
+let seq = 4127;
+function log(text, kind) {
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="seq">${++seq}</span><span class="${kind || ''}">${text}</span>`;
+  logEl.prepend(row);
+  requestAnimationFrame(() => row.classList.add('on'));
+  while (logEl.children.length > 5) logEl.lastChild.remove();
+}
+
+/* ---- the story, on a loop ---- */
+const status = document.getElementById('status');
+const ASH_DESK = [622, 148], BO_DESK = [392, 148];
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function story() {
+  while (true) {
+    status.textContent = 'Bo is building';
+    await wait(2600);
+
+    say('bo', 'Task B is ready for you!');
+    log('WorkPackageSubmitted &middot; Task B');
+    status.textContent = 'Bo submitted Task B';
+    await wait(3000); hush();
+
+    status.textContent = 'Ash is checking it';
+    log('StateTransitionAllowed &middot; &rarr; IN_REVIEW', 'good');
+    await wait(2600);
+
+    P.ash.sitting = false;
+    moveTo('ash', 500, 210);
+    log('StateTransitionRejected &middot; Task B', 'bad');
+    status.textContent = 'Ash is walking it back';
+    await wait(1700);
+    moveTo('ash', 470, 148);
+    await wait(1500);
+
+    say('ash', "Not yet &mdash; I can't check this.", 'No test run, no API response. Saying it works isn\'t showing it.', true);
+    await wait(4600); hush();
+
+    moveTo('ash', ...ASH_DESK);
+    P.ash.sitting = true;
+    status.textContent = 'Bo is fixing it';
+    log('Task B &rarr; REVISION_REQUIRED');
+    await wait(3400);
+
+    say('bo', 'Fixed &mdash; tests attached this time.');
+    log('EvidenceAttached &middot; TEST_OUTPUT', 'good');
+    await wait(3000); hush();
+    log('StateTransitionAllowed &middot; &rarr; IN_QA', 'good');
+    status.textContent = 'over to Juno';
+    await wait(3000);
+  }
+}
+story();
+
+/* ---- camera: three fixed positions, set by the buttons and nothing else ---- */
+const cam = document.getElementById('cam');
+function setView(b) {
+  cam.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  world.style.setProperty('--tilt', b.dataset.tilt + 'deg');
+  world.style.setProperty('--spin', b.dataset.spin + 'deg');
+  world.style.setProperty('--zoom', b.dataset.zoom);
+  world.style.setProperty('--ox', b.dataset.ox + 'px');
+  world.style.setProperty('--oy', b.dataset.oy + 'px');
+}
+cam.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) setView(b);
+});
+setView(cam.querySelector('[aria-pressed="true"]'));
+</script>

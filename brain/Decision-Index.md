@@ -4,9 +4,6 @@
 
 Index project decisions when they are recorded.
 
-## Suggested Sections
-
-<!-- Placeholder -->
 
 ## Decisions
 
@@ -64,6 +61,3 @@ Index project decisions when they are recorded.
   - **Amendment — Checkpoint 5 Implementation Ruling, 2026-09-04.** One Builder ruling made while implementing this checkpoint; §6.1 to §6.10 stand unchanged.
     - [6.11 The Event Vocabulary Belongs To The Domain Layer](../adr/ADR-006.md#611-the-event-vocabulary-belongs-to-the-domain-layer) — `EventType`, `TransitionOutcome`, `OSEvent`, and `TransitionAuditRecord` live in `domain/`; `events/` keeps the envelope, channel, emitter, and subscriber. Resolves a circular dependency the Blueprint section 11 layout requires, **the same way ADR-004 4.7 resolved it for the condition vocabulary**. A placement ruling only: no field, value, or invariant changes, and no `AggregateType` vocabulary is invented.
 
-## Placeholders
-
-<!-- Placeholder -->
