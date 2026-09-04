@@ -289,7 +289,7 @@ PostgreSQL is the single source of truth. All state changes, task revisions, wor
 #### 10. Event & State Transition Audit Record
 - **Event:** `id` (UUID), `event_type` (string), `aggregate_type` (string), `aggregate_id` (UUID), `actor_id` (UUID), `actor_role` (string), `payload` (JSONB), `occurred_at`.
 - **State Transition Audit:** `id` (UUID), `entity_type` (string), `entity_id` (UUID), `from_state` (string), `to_state` (string), `requested_by` (UUID), `decision` (`ALLOWED` vs `REJECTED`), `rejection_reasons` (list of strings), `timestamp`.
-- **Checkpoint Ownership (ADR-005 5.13):** **Both entities are persisted at Checkpoint 5, not Checkpoint 4.** `os_events` belongs with the event layer that writes it, and `state_transitions_audit` — which no checkpoint previously owned — is assigned to Checkpoint 5 alongside it. **Checkpoint 4 creates neither table, neither model, nor an event repository.**
+- **Checkpoint Ownership (ADR-005 5.13):** **Both entities are persisted at Checkpoint 5, not Checkpoint 4.** `os_events` belongs with the event layer that writes it, and `state_transitions_audit` — which no checkpoint previously owned — is assigned to Checkpoint 5 alongside it. Checkpoint 4 created neither table, neither model, nor an event repository. **Both are delivered as of Checkpoint 5 ([ADR-006](../../adr/ADR-006.md));** the Event entity above gains `sequence_number` as its ordering authority (ADR-006 6.1), and the audit entity gains `outcome`, because it records allowed transitions as well as refused ones (ADR-006 6.3).
 
 ---
 
@@ -479,19 +479,28 @@ Two consequences follow without any new mechanism:
 Every significant OS action generates a structured domain event persisted synchronously into `os_events` before publishing a notification.
 
 ```
-┌─────────────────────────┐
-│       Event Model       │
-├─────────────────────────┤
-│ id: UUID                │
-│ event_type: str         │
-│ aggregate_type: str     │
-│ aggregate_id: UUID      │
-│ actor_id: UUID          │
-│ actor_role: str         │
-│ payload: JSONB          │
-│ occurred_at: timestamp  │
-└─────────────────────────┘
+┌──────────────────────────────┐
+│         Event Model          │
+├──────────────────────────────┤
+│ id: UUID                     │
+│ sequence_number: BIGINT      │
+│ event_type: EventType        │
+│ aggregate_type: str          │
+│ aggregate_id: UUID           │
+│ actor_id: UUID | NULL        │
+│ actor_role: Initiator        │
+│ payload: JSONB               │
+│ occurred_at: timestamp       │
+└──────────────────────────────┘
 ```
+
+> [!NOTE]
+> **Delivered at Checkpoint 5 ([ADR-006](../../adr/ADR-006.md)).** Four clarifications to the model above:
+>
+> - **`sequence_number` is `GENERATED ALWAYS AS IDENTITY` and is the sole authority on append order** (ADR-006 6.1). No timestamp orders events: `occurred_at` is domain-supplied and can tie or skew, and the persistence metadata timestamps are forbidden for ordering by ADR-005 5.9. Gaps are expected and carry no meaning — a rolled-back transaction consumes a value — so consumers compare, never count.
+> - **`event_type` is a closed thirteen-entry vocabulary**, enforced by a `CHECK` generated from the enumeration (ADR-006 6.4). `EscalationRaised` is included as the forward reference this section already records; **it creates no `BLOCKED` state and D-1 remains deferred**.
+> - **`actor_id` is nullable, and null is permitted only when `actor_role` is `OS`** (ADR-006 6.8), enforced by a `CHECK` written as an equivalence so it fails in both directions. `actor_role` carries an `Initiator` — the six Actor roles plus `OS` — because the OS is the sole permitted initiator of four Task transitions and has no row in `actors`.
+> - **`payload` has no per-event-type schema at Foundation v1** (ADR-006 6.5). The structured enforcement detail lives in `state_transitions_audit` instead.
 
 | Event Type | Producer | Consumer | State Change | Wakes Component? | Meaning / Payload Highlights |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -526,8 +535,8 @@ Every significant OS action generates a structured domain event persisted synchr
 │  │ feature_plans               │              │ qa_reports / defects   │ │
 │  │ tasks                       │              │ review_decisions       │ │
 │  │ work_packages (hybrid)      │              │ decisions / acks       │ │
-│  └─────────────────────────────┘              │ os_events         [CP5]│ │
-│                                               │ transitions_audit [CP5]│ │
+│  └─────────────────────────────┘              │ os_events              │ │
+│                                               │ transitions_audit      │ │
 │                                               └────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -537,7 +546,7 @@ Every significant OS action generates a structured domain event persisted synchr
 3. **Insert-Only Enforcement (ADR-003 3.1):** Rows in the append-only tables are **inserted, never updated**. In particular, `task_revisions` rows carry no mutable status column; a Revision is never rewritten or re-marked once recorded. The active-revision pointer lives on `tasks.active_revision_number`, which is authoritative-state, not history.
 4. **Actor Persistence (ADR-005 5.1):** A single `actors` table carries `role` as a column. **No `coordinators` table and no Domain Registry persistence is created**, because ADR-003 3.10 forbids it until the Coordinator lifecycle is resolved (§14, item 7). The `coordinators` / `workers` split shown in earlier revisions of this diagram is **superseded**.
 5. **`work_packages` Is A Hybrid (ADR-005 5.8):** Earlier revisions of this diagram placed `work_packages` under append-only history, which contradicted the five-value OS projection ADR-003 3.5 requires. **That classification is amended.** A `DRAFT` Work Package remains editable; `SUBMITTED` is persisted as the durable record; **submitted content becomes immutable**; and the **already-approved lifecycle transitions remain the sole authority for status changes**. ADR-003 3.5 is unchanged.
-6. **Events And Transition Audit Land At Checkpoint 5 (ADR-005 5.13):** `os_events` and `state_transitions_audit` are marked `[CP5]` above. **Checkpoint 4 creates neither**, and no event repository. `state_transitions_audit`, which no checkpoint previously owned, is assigned to Checkpoint 5 (§15).
+6. **Events And Transition Audit Landed At Checkpoint 5 (ADR-005 5.13, [ADR-006](../../adr/ADR-006.md)):** `os_events` and `state_transitions_audit` are **delivered**, with their models, migration `0008`, and append-only repositories bound into the Unit of Work as `uow.events` and `uow.transition_audit`. Checkpoint 4 created neither. Both carry `sequence_number` as the ordering authority (ADR-006 6.1) and, being append-only, **neither carries a version column** (item 8 below).
 7. **Enforcement Mechanism (ADR-005 5.8, 5.14):** Append-only is enforced **by construction** — no repository exposes an update path for a historical table (ADR-005 5.4, 5.7) — not by database trigger. This is a **recorded limitation**, not an independently enforced guarantee in the ADR-001 sense: code holding a raw session could still bypass it.
 8. **Optimistic-Lock Versions (ADR-005 5.6):** A version column exists on the authoritative-state tables only — `actors`, `features`, `feature_plans`, `tasks`, `work_packages`. Append-only tables carry none, because a row that is never updated cannot lose an update race.
 9. **Persistence Metadata Timestamps (ADR-005 5.9):** Every table carries database-generated persistence metadata timestamps. They are **separate from the domain timestamps**, are **never mapped into domain objects**, and **must not be used for ordering, filtering, or authoritative QA-result selection** (ADR-004 4.15, §14 item 18).
@@ -560,14 +569,15 @@ To guarantee that the rejection record is never lost due to a rolled-back state 
 1. State machine rules and policy preconditions are evaluated **before** applying any mutation to the target entity.
 2. If validation **fails**:
    - The entity's state is **not mutated** (it remains untouched in its original `from_state`).
-   - The rejection audit entry is inserted into `state_transitions_audit` and `os_events` (`StateTransitionRejected`).
+   - The rejection audit entry is inserted into `state_transitions_audit` — carrying `outcome = REJECTED` and the structured reasons — and into `os_events` (`StateTransitionRejected`).
    - The transaction containing the rejection record is **committed** to PostgreSQL.
    - The OS returns `422 Unprocessable Entity` with the structured rejection reasons to the requesting actor.
 3. If validation **succeeds**:
    - The entity state is mutated to `to_state`.
    - Immutable child records (Work Package, Evidence, Revision) are inserted.
+   - An audit entry carrying `outcome = ALLOWED` is inserted into `state_transitions_audit`. **[Amended — ADR-006 6.3]** This section previously wrote to that ledger on the failure path only; **every evaluated attempt is now recorded**, so an entity's transition history is answerable from typed columns rather than from an unconstrained event payload.
    - The success event (`StateTransitionAllowed` / specific domain event) is inserted into `os_events`.
-   - The transaction is **committed**, followed by a post-commit `pg_notify()`.
+   - `pg_notify()` is called **inside this transaction**, and the transaction is then **committed**. **[Supersedes the post-commit emit — ADR-006 6.2]** PostgreSQL delivers a queued notification only on commit, so the notification and the event it announces are atomic. The former sequence left a window in which committed work was never announced.
 
 ```python
 # Conceptual Transactional Pattern in OS Kernel (Validation-First, optimistic locking)
@@ -635,12 +645,16 @@ async with unit_of_work() as uow:
     #    transaction rolls back (ADR-005 5.6).
     await uow.commit()
 
-# 7. Post-commit notification (LISTEN/NOTIFY)
-await notification_bus.emit(channel="task_events", payload={"event_id": event.id})
+    # 7. Queue the wake-up on THIS transaction, before the commit in step 6.
+    #    Postgres delivers it only if the transaction commits (ADR-006 6.2), so
+    #    the notification and the event it announces are atomic. One channel
+    #    carries every event and subscribers filter (ADR-006 6.7); the payload
+    #    is a thin envelope, never a domain object (§14 item 3).
+    await emit_for_event(uow.session, event)      # -> pg_notify('os_events', ...)
 ```
 
 > [!NOTE]
-> **Illustrative only.** The names above depict the transactional shape, not a fixed API. The `os_events` and `state_transitions_audit` writes land at Checkpoint 5 ([ADR-005](../../adr/ADR-005.md) 5.13); `load_rule_context` and the transition runner land at Checkpoint 6 ([ADR-004](../../adr/ADR-004.md) 4.4). **Checkpoint 4 builds only the repositories and the session scope this pattern consumes.**
+> **Illustrative only.** The names above depict the transactional shape, not a fixed API. The `os_events` and `state_transitions_audit` writes and the `emit_for_event` call **are delivered** at Checkpoint 5 ([ADR-005](../../adr/ADR-005.md) 5.13, [ADR-006](../../adr/ADR-006.md)); `load_rule_context` and the transition runner land at Checkpoint 6 ([ADR-004](../../adr/ADR-004.md) 4.4). **Checkpoint 5 builds the record and the signal; the Kernel that calls them in this order does not exist yet.**
 
 ---
 
@@ -870,11 +884,11 @@ AI-Engineering-OS/
 │       │   ├── transition.py   # Transactional state transition runner
 │       │   └── context.py      # Execution & actor context
 │       │
-│       ├── events/             # Event model & notification bus               [PLANNED — CP5]
+│       ├── events/             # Notification bus & subscriber            [IMPLEMENTED — CP5]
 │       │   ├── __init__.py
-│       │   ├── types.py        # Domain event schemas
-│       │   ├── bus.py          # PostgreSQL LISTEN/NOTIFY bus
-│       │   └── listener.py     # Async event listener runner
+│       │   ├── types.py        # Notification envelope & channel
+│       │   ├── bus.py          # In-transaction pg_notify emitter
+│       │   └── listener.py     # Drain-then-listen async subscriber
 │       │
 │       ├── storage/            # Persistence & data access
 │       │   ├── __init__.py                                          [IMPLEMENTED — CP1]
@@ -891,7 +905,7 @@ AI-Engineering-OS/
 │       │   │   ├── evidence.py                                      [PLANNED — CP4]
 │       │   │   ├── qa.py                                            [PLANNED — CP4]
 │       │   │   ├── decision.py                                      [PLANNED — CP4]
-│       │   │   └── event.py    # os_events, transitions audit        [PLANNED — CP5]
+│       │   │   └── event.py    # os_events, transitions audit    [IMPLEMENTED — CP5]
 │       │   ├── mappers/        # Explicit domain <-> row translation [PLANNED — CP4]
 │       │   │   ├── __init__.py
 │       │   │   └── <one module per persisted entity>
@@ -908,7 +922,8 @@ AI-Engineering-OS/
 │       │       ├── qa_repo.py
 │       │       ├── review_decision_repo.py
 │       │       ├── decision_repo.py
-│       │       └── event_repo.py                                    [PLANNED — CP5]
+│       │       ├── event_repo.py                                [IMPLEMENTED — CP5]
+│       │       └── transition_audit_repo.py                     [IMPLEMENTED — CP5]
 │       │
 │       ├── api/                # FastAPI HTTP REST control plane              [PLANNED — CP7]
 │       │   ├── __init__.py
@@ -945,7 +960,8 @@ AI-Engineering-OS/
     │   ├── test_database.py           # PostgreSQL connectivity         [IMPLEMENTED — CP1]
     │   ├── test_migrations.py         # Alembic baseline migration      [IMPLEMENTED — CP1]
     │   ├── test_persistence.py                                         [PLANNED — CP4]
-    │   ├── test_events_listen_notify.py                                [PLANNED — CP5]
+    │   ├── test_event_store.py                                     [IMPLEMENTED — CP5]
+    │   ├── test_events_listen_notify.py                            [IMPLEMENTED — CP5]
     │   └── test_os_transition_enforcement.py                           [PLANNED — CP6]
     └── e2e/                                                            [PLANNED — CP8]
         └── test_first_vertical_slice.py
@@ -957,7 +973,7 @@ AI-Engineering-OS/
 - `src/ai_engineering_os/storage`: Isolates all SQLAlchemy and relational mapping details. **ADR-005 5.11: ORM models never cross the repository boundary** — repositories return domain objects, and the Rule Engine and every higher layer must never receive a SQLAlchemy model. `mappers/` performs the translation explicitly; `errors.py` translates infrastructure failures (ADR-005 5.12); `unit_of_work.py` provides the session scope but owns no business transaction boundary (ADR-005 5.5).
 - `src/ai_engineering_os/api`: Provides clean HTTP contract without business logic pollution.
 - `tests/`: Separated into `unit`, `integration`, and `e2e` for fast local feedback loops.
-- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. **`[IMPLEMENTED]` markers are synchronized with the repository at the end of Checkpoint 3**; no Checkpoint 4 code exists yet. The `[PLANNED — CP4]` and `[PLANNED — CP5]` entries reflect the scope fixed by [ADR-005](../../adr/ADR-005.md). Markers must be re-synchronized as later checkpoints land.
+- **Status markers:** The tree above distinguishes implemented code from the Foundation v1 target. **`[IMPLEMENTED]` markers are synchronized with the repository at the end of Checkpoint 5.** Checkpoints 1 through 5 are delivered; the remaining `[PLANNED]` entries are Checkpoints 6 through 8. Markers must be re-synchronized as later checkpoints land.
 
 ---
 
@@ -967,7 +983,7 @@ AI-Engineering-OS/
 | :--- | :--- | :--- |
 | **Domain Unit Tests** | `domain/`, `state/`, `rules/` | - Pydantic model validation and serialization.<br>- State machine valid vs. invalid transitions.<br>- Rule evaluators (evidence missing, role mismatch, unresolved blockers). |
 | **Persistence Integration Tests** | `storage/` + PostgreSQL | - CRUD operations on relational models.<br>- Database transaction rollback on error.<br>- Immutability of revisions, and of **submitted** Work Package content (ADR-005 5.8).<br>- Alembic migrations up/down consistency. |
-| **Event & Bus Integration Tests** | `events/` + PostgreSQL | - Events appended to `os_events` in sequential order.<br>- `LISTEN/NOTIFY` wakes asynchronous listeners reliably.<br>- Reconnection / state recovery from unhandled events. |
+| **Event & Bus Integration Tests** | `events/` + `storage/` + PostgreSQL | - Events appended to `os_events` in sequential order, **proven against deliberately inverted `occurred_at` timestamps** so an implementation sorting by time cannot pass (ADR-006 6.1).<br>- `LISTEN/NOTIFY` wakes asynchronous listeners reliably.<br>- **A rolled-back transaction notifies nobody** — the test an after-commit emit would fail (ADR-006 6.2).<br>- Reconnection / state recovery from unhandled events, drained in order from the subscriber's position (ADR-006 6.6).<br>- **The audit ledger records successes as well as refusals** (ADR-006 6.3). |
 | **OS Enforcement Integration Tests** | `core/` + `rules/` + DB | - Worker cannot transition task to `SUBMITTED` without System Evidence.<br>- Coordinator cannot transition Feature to `ACCEPTED` without QA Final Pass.<br>- Unauthorized actor role transitions are deterministically blocked with 403/422. |
 | **First Vertical Slice E2E Test** | `tests/e2e/test_first_vertical_slice.py` | Complete 11-step execution from Feature Creation to Final Acceptance, verifying state persistence, rule gating, event publication, and history reconstruction. |
 
@@ -1015,9 +1031,10 @@ The following are genuine technical implementation questions for Foundation v1 (
 2. **Evidence Storage & Payload Sizing Strategy:**
    - *Requirement:* The architecture strictly requires durable, retrievable, and integrity-verifiable evidence records.
    - *Implementation Strategy for v1:* The threshold for storing evidence inline in PostgreSQL (`TEXT`/`JSONB`) versus offloading to external/file storage is an initial implementation and configuration parameter (`MAX_INLINE_EVIDENCE_BYTES`, defaulting to 5MB) rather than an unchangeable architectural constraint. Payloads exceeding the configured threshold store a durable URI reference accompanied by an authoritative SHA-256 integrity checksum in PostgreSQL. This threshold can be adjusted based on operational benchmarks without changing the domain architecture.
-3. **PostgreSQL LISTEN/NOTIFY Payload Limits:**
+3. **PostgreSQL LISTEN/NOTIFY Payload Limits — RESOLVED 2026-09-04 ([ADR-006](../../adr/ADR-006.md) 6.7).**
    - *Question:* PostgreSQL `NOTIFY` has an 8,000-byte payload limit.
-   - *Recommendation for v1:* Never send full domain objects over `NOTIFY`. Send lightweight event envelopes containing only `{"event_id": "<uuid>", "aggregate_type": "Task", "aggregate_id": "<uuid>"}`. Receivers fetch the authoritative state directly from PostgreSQL.
+   - *Resolution:* The recommendation is **implemented as written**. `NotificationEnvelope` carries exactly `{"event_id", "aggregate_type", "aggregate_id"}`, the emitter refuses any payload exceeding the limit, and receivers fetch authoritative state from PostgreSQL. **One channel carries every event** (ADR-006 6.7); the `task_events` name used in §7.2 is replaced, because a second channel would mean a second reconnect-and-drain implementation — the one piece of ordering-sensitive logic in this layer.
+   - *Consequence:* **A dropped notification is not lost data.** Subscribers resume by `sequence_number` and drain what they missed (ADR-006 6.6). The limitation deliberately retained is that a subscriber's position is held in memory, so events appended while its process was entirely down are not replayed to it.
 4. **Local Development Authentication Strategy:**
    - *Question:* How should actor identities be passed during local development and testing?
    - *Recommendation for v1:* Use HTTP headers (`X-Actor-ID`, `X-Actor-Role`, `X-Domain-ID`) resolved via FastAPI dependency injection, with a configurable authentication middleware hook for future token-based auth.
@@ -1189,12 +1206,14 @@ Checkpoint 4 builds the durable store and the repositories that Checkpoint 6 wil
 
 **What Checkpoint 4 does NOT do.** No Kernel, no transaction runner, and **no context loader** (Checkpoint 6). No service or use-case class owning a business transaction (Checkpoint 6). **No `os_events`, no `state_transitions_audit`, no event model, and no event repository** (Checkpoint 5, ADR-005 5.13). No HTTP layer (Checkpoint 7). **No new rule, transition condition, `RuleContext` fact, or lifecycle state.** No reviewer routing, QA authoritative-result selection, or Feature supersession lifecycle. **D-1 and D-6 remain deferred and untouched**, and no generic delete exists that could implement either by accident.
 
-### Checkpoint 5: Event Store & Notification Bus
+### Checkpoint 5: Event Store & Notification Bus — **DELIVERED 2026-09-04 ([ADR-006](../../adr/ADR-006.md))**
 - **Scope correction (ADR-005 5.13):** this checkpoint owns **both** `os_events` **and** `state_transitions_audit` — their tables, models, migrations, and repositories. §11 previously marked the event model `[PLANNED — CP4]` and §15 Checkpoint 4 previously listed an `EventRepository`; **both are superseded.** `state_transitions_audit`, which no checkpoint previously owned, is assigned here.
-- Implement `EventModel` and append-only event recording in `src/ai_engineering_os/events/`.
-- Implement the `state_transitions_audit` record required by the §7.2 Validation-First invariant, so a rejected transition's durable audit entry has somewhere to land before the Checkpoint 6 runner needs it.
-- Implement PostgreSQL `LISTEN/NOTIFY` emitter and async subscriber.
-- Write integration tests for event persistence and notification wake-up.
+- **Delivered.** `os_events` and `state_transitions_audit`, their models, migration `0008`, and two append-only repositories bound as `uow.events` and `uow.transition_audit`. Neither exposes an update or a delete.
+- **Delivered.** The event vocabulary in `domain/` — `EventType`, `TransitionOutcome`, `OSEvent`, `TransitionAuditRecord`. **[Placement ruling — ADR-006 6.11]** §11 places the types in `events/` and the repository in `storage/`, which requires `storage` to import `events` while §2.2 has `events` importing `storage`. The vocabulary moves to `domain`, resolving the cycle the way ADR-004 4.7 resolved it for `TransitionCondition`. **§2.2 is confirmed, not amended.**
+- **Delivered.** `events/` — the notification envelope and single channel, the in-transaction `pg_notify()` emitter, and the drain-then-listen subscriber with an in-memory position.
+- **Delivered.** Integration tests for append ordering against inverted timestamps, both audit outcomes, notification wake-up, rollback silence, and reconnect backlog recovery.
+
+**What Checkpoint 5 does NOT do.** **No Kernel and no transaction runner** (Checkpoint 6) — nothing yet calls the emitter during a real transition, so the two-call sequence of ADR-006 6.9 is **not enforced by construction** and is a required check at Checkpoint 6. No context loader (Checkpoint 6). No HTTP layer (Checkpoint 7). **No per-event-type payload schema** (ADR-006 6.5), **no durable subscriber position** (ADR-006 6.6), and **no `AggregateType` vocabulary** — 6.4 closed the event type vocabulary and nothing more. No message broker, outbox, retry queue, or delivery acknowledgement. **No new rule, transition condition, `RuleContext` fact, lifecycle state, or `ActorRole` entry.** **D-1 and D-6 remain deferred and untouched**, and `EscalationRaised` creates no `BLOCKED` state.
 
 ### Checkpoint 6: OS Kernel & Transactional Transition Runner
 

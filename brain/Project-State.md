@@ -16,11 +16,11 @@ Run these three commands. All three are green as of the date above.
 
 | Check | Result |
 |---|---|
-| `pytest` | 581 passed |
+| `pytest` | 606 passed |
 | `ruff check` | All checks passed |
-| `mypy src` | No issues in 70 source files |
-| Alembic migrations | 7 applied: `0001_baseline` → `0007_decisions` |
-| Source size | ~6,500 LOC under `src/ai_engineering_os/` |
+| `mypy src` | No issues in 79 source files |
+| Alembic migrations | 8 applied: `0001_baseline` → `0008_events_and_transition_audit` (round-trip verified) |
+| Source size | ~7,400 LOC under `src/ai_engineering_os/` |
 
 ## Checkpoint Progress — Foundation v1
 
@@ -32,8 +32,8 @@ Checkpoint definitions live in [Implementation-Blueprint §15](../docs/02-implem
 | 2 | Pure Domain Entities & State Machines | **Done** | `8fc18bb` |
 | 3 | Rule & Policy Engine | **Done** | `5cff96b` |
 | 4 | Persistence & Storage Layer | **Done** | `c63db8a` |
-| 5 | Event Store & LISTEN/NOTIFY Bus | **In progress** — [ADR-006](../adr/ADR-006.md) accepted; code not written | — |
-| 6 | OS Kernel & Transactional Transition Runner | Not started | — |
+| 5 | Event Store & LISTEN/NOTIFY Bus | **Done** | see git log |
+| 6 | OS Kernel & Transactional Transition Runner | **NEXT — blocked, see below** | — |
 | 7 | FastAPI Control Plane & Endpoints | Not started | — |
 | 8 | Typed Client SDK & E2E Vertical Slice | Not started | — |
 
@@ -41,11 +41,11 @@ Checkpoint definitions live in [Implementation-Blueprint §15](../docs/02-implem
 
 | Package | Delivered at | Contents |
 |---|---|---|
-| `domain/` | CP2 | Immutable entities: Actor, Feature, Plan, Task, WorkPackage, Evidence, QA, Decision; identifiers, enums, errors, conditions |
+| `domain/` | CP2, CP5 | Immutable entities: Actor, Feature, Plan, Task, WorkPackage, Evidence, QA, Decision; identifiers, enums, errors, conditions; plus the event vocabulary (ADR-006 6.11) |
 | `state/` | CP2 | Feature / Plan / Task / WorkPackage state machines over a shared `machine.py` |
 | `rules/` | CP3 | Rule engine, registry, `RuleContext`, evidence / authority / acceptance / dependency rules, result + code types |
-| `storage/` | CP4 | SQLAlchemy models, mappers, per-aggregate repositories, `unit_of_work.py`, `database.py` |
-| `events/` | CP5 | **Does not exist yet** — this is the next thing to build |
+| `storage/` | CP4, CP5 | SQLAlchemy models, mappers, per-aggregate repositories, `unit_of_work.py`, `database.py`; plus `os_events` and `state_transitions_audit` |
+| `events/` | CP5 | Notification envelope and single channel, in-transaction `pg_notify` emitter, drain-then-listen subscriber |
 | `core/` | CP6 | Does not exist yet (Kernel, TransitionRunner) |
 | `api/` | CP7 | Does not exist yet |
 
@@ -62,7 +62,23 @@ But the four `BLOCKED_CONDITIONS` depend on three unresolved Builder questions
 mandatory evidence set, and the Reviewer assignment model). **These are on the critical path
 to Checkpoint 6 and cannot be decided silently during implementation.**
 
-Checkpoint 5 does **not** touch the gate, so it can proceed now.
+Checkpoint 5 did **not** touch the gate. **Checkpoint 6 does, and cannot start until those three
+questions are answered.** They are architecture decisions, not implementation details.
+
+## Known Limitations — Recorded, Not Overclaimed
+
+Two properties are recorded as limitations rather than claimed as guarantees. Both are written
+into [ADR-006](../adr/ADR-006.md) and neither is a defect:
+
+1. **A subscriber's position is held in memory** (6.6). No event is lost — `os_events` is durable
+   and append-only — but events appended while a subscriber process was entirely down are not
+   replayed to it on restart.
+2. **Staging an event does not itself emit its notification** (6.9). They are two calls, so a
+   future caller could do the first and omit the second. The component that would omit it is the
+   Checkpoint 6 Kernel, which does not exist yet. **This is a required check at Checkpoint 6.**
+
+A third, inherited from ADR-005 5.8: append-only is enforced **by construction** — no repository
+exposes an update path — not by database trigger. Code holding a raw session could still bypass it.
 
 ## Related
 

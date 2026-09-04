@@ -13,6 +13,7 @@ __all__ = [
     "ActorId",
     "ClaimId",
     "DecisionId",
+    "EventId",
     "EvidenceId",
     "FeatureId",
     "FeaturePlanId",
@@ -21,6 +22,7 @@ __all__ = [
     "ReviewDecisionId",
     "TaskId",
     "TaskRevisionId",
+    "TransitionAuditId",
     "WorkPackageId",
     "new_id",
 ]
@@ -28,6 +30,7 @@ __all__ = [
 ActorId = NewType("ActorId", UUID)
 ClaimId = NewType("ClaimId", UUID)
 DecisionId = NewType("DecisionId", UUID)
+EventId = NewType("EventId", UUID)
 EvidenceId = NewType("EvidenceId", UUID)
 FeatureId = NewType("FeatureId", UUID)
 FeaturePlanId = NewType("FeaturePlanId", UUID)
@@ -36,6 +39,7 @@ QAReportId = NewType("QAReportId", UUID)
 ReviewDecisionId = NewType("ReviewDecisionId", UUID)
 TaskId = NewType("TaskId", UUID)
 TaskRevisionId = NewType("TaskRevisionId", UUID)
+TransitionAuditId = NewType("TransitionAuditId", UUID)
 WorkPackageId = NewType("WorkPackageId", UUID)
 
 

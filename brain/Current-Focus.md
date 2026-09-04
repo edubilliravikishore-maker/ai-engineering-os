@@ -5,58 +5,65 @@
 
 ## The One Next Action
 
-**Checkpoint 5 — Event Store & LISTEN/NOTIFY Bus. Implementation.**
+**Answer the three Builder questions that block Checkpoint 6.** Not code.
 
-The decisions are recorded: [ADR-006](../adr/ADR-006.md), accepted 2026-09-04, nine
-rulings indexed in [Decision-Index](Decision-Index.md). Step 1 of the rhythm below is
-**done**; the next action is step 2, the code.
+Checkpoints 1 through 5 are delivered, green, and committed. Checkpoint 6 is the next in
+sequence and **it is blocked** — not by missing code, but by three architecture decisions
+only the Builder can make.
 
-Everything before it is done, green, and committed. Nothing blocks it.
+## What Is Blocking, Precisely
 
-## Why This And Not Something Else
+The Foundation v1 Rule Coverage Gate ([ADR-004](../adr/ADR-004.md) 4.12, 4.13) forbids the
+Kernel becoming operational while any required transition condition is unenforced. Four
+`BLOCKED_CONDITIONS` cannot be implemented until these are ruled on
+([Blueprint §14](../docs/02-implementation/Implementation-Blueprint.md)):
 
-- Checkpoints run in order; 1–4 are done and 5 is the next in the Blueprint sequence.
-- Checkpoint 6 (the Kernel) is **blocked** by the Rule Coverage Gate and by three
-  undecided Builder questions — see [Project-State](Project-State.md#known-blocker-ahead--do-not-walk-into-this-blind).
-- Checkpoint 5 is the last piece of machinery the Kernel needs, and it is unblocked.
+| Item | Question |
+| :--- | :--- |
+| 15 | What is the definition of an "implementation task"? |
+| 16 | What is the Feature-level mandatory evidence set? |
+| 17 | What is the Reviewer assignment and routing model? |
 
-## Checkpoint 5 Scope
+A fourth is on the same critical path and is **not** one of the four blocked conditions:
 
-From [Blueprint §15](../docs/02-implementation/Implementation-Blueprint.md) and
-[ADR-005 5.13](../adr/ADR-005.md#513-events-and-transition-audit-deferred-to-checkpoint-5):
+| Item | Question |
+| :--- | :--- |
+| 18 | Which QA report states a Feature's current defect position? ([ADR-004](../adr/ADR-004.md) 4.15) |
 
-**In scope**
+ADR-005 5.9 and ADR-006 6.1 both **add prohibitions rather than answers** to item 18: neither
+the persistence metadata timestamps nor `sequence_number` may be used to build that selector.
+It must be designed before Checkpoint 6.
 
-1. `os_events` — table, model, migration, append-only repository.
-2. `state_transitions_audit` — table, model, migration, repository. Required by the
-   §7.2 Validation-First invariant so a *rejected* transition has a durable place to land
-   before the Checkpoint 6 runner needs it. **No earlier checkpoint owned this table.**
-3. `EventModel` and append-only event recording under `src/ai_engineering_os/events/`.
-4. PostgreSQL `LISTEN/NOTIFY` emitter and async subscriber.
-   PostgreSQL is the durable store; `LISTEN/NOTIFY` is **only a wake-up mechanism** (ADR-002).
-5. Integration tests for event persistence and notification wake-up.
+## Why Not Just Start Coding Checkpoint 6
 
-**Out of scope**
-
-- No Kernel, no TransitionRunner, no context loader (Checkpoint 6).
-- No HTTP layer (Checkpoint 7).
-- No new rule, transition condition, `RuleContext` fact, or lifecycle state.
-- No resolution of Blueprint §14 items 15, 16, 17 — those are Builder decisions.
+Because the gate exists to stop exactly that. Deciding any of these silently inside an
+implementation is the failure mode ADR-003 and ADR-004 were written to prevent — and the
+project has now recorded four separate times that these must not be decided in passing.
 
 ## The Established Working Rhythm
 
 Every checkpoint so far has landed as **two commits**, in this order. Follow it.
 
 1. `docs: establish Checkpoint N <topic> decisions` — write the ADR **first**, resolving
-   ambiguity before code exists. (ADR-004 for CP3, ADR-005 for CP4.)
+   ambiguity before code exists. (ADR-004 for CP3, ADR-005 for CP4, ADR-006 for CP5.)
 2. `feat: implement Checkpoint N <topic>` — implement exactly what the ADR authorised.
 
-Checkpoint 5's step 1 is **[ADR-006](../adr/ADR-006.md)** — written and accepted. It
-supersedes the Blueprint §7.2 step 7 post-commit emit, and amends that section's
-transition-audit description and channel name. Those three edits to the Blueprint belong
-with the implementation commit, not before it.
+An amendment gets its own docs commit when implementation surfaces something the ADR did not
+foresee — as ADR-006 6.11 did for the event vocabulary placement.
 
-## Definition Of Done
+So Checkpoint 6 starts with **ADR-007**, recording the four rulings above.
 
-`pytest`, `ruff check`, and `mypy src` all green, plus the new integration tests, plus
-[Project-State](Project-State.md) updated to mark Checkpoint 5 done.
+## Carried Into Checkpoint 6
+
+Two things Checkpoint 5 deliberately left for the Kernel:
+
+- **The emitter is called by the Kernel, not by the repository** ([ADR-006](../adr/ADR-006.md) 6.9).
+  Staging an event and emitting its wake-up are two calls and this is **not enforced by
+  construction**. Verifying the Kernel never does one without the other is a required check.
+- **Per-event-type payload schemas** ([ADR-006](../adr/ADR-006.md) 6.5) were deferred because the
+  consumers did not exist. At Checkpoint 6 they start to.
+
+## Definition Of Done For Checkpoint 6
+
+`pytest`, `ruff check`, `ruff format --check`, and `mypy src` all green; the Rule Coverage Gate
+passing rather than expected-to-fail; and [Project-State](Project-State.md) updated.

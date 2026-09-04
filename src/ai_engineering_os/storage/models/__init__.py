@@ -7,8 +7,8 @@ Importing this package registers every table on ``Base.metadata``, which is what
 frozen domain objects; the Rule Engine and every higher layer must never receive
 a SQLAlchemy model.
 
-`os_events` and `state_transitions_audit` are **not here**: both belong to
-Checkpoint 5 (ADR-005 5.13).
+`os_events` and `state_transitions_audit` are here as of Checkpoint 5, which
+ADR-005 5.13 assigned them to and ADR-006 delivers.
 """
 
 from ai_engineering_os.storage.database import Base
@@ -18,6 +18,7 @@ from ai_engineering_os.storage.models.decision import (
     DecisionRow,
     ReviewDecisionRow,
 )
+from ai_engineering_os.storage.models.event import OSEventRow, StateTransitionAuditRow
 from ai_engineering_os.storage.models.evidence import EvidenceRecordRow
 from ai_engineering_os.storage.models.feature import FeatureRow
 from ai_engineering_os.storage.models.plan import FeaturePlanRow, PlanTaskDefinitionRow
@@ -37,10 +38,12 @@ __all__ = [
     "EvidenceRecordRow",
     "FeaturePlanRow",
     "FeatureRow",
+    "OSEventRow",
     "PlanTaskDefinitionRow",
     "QADefectRow",
     "QAReportRow",
     "ReviewDecisionRow",
+    "StateTransitionAuditRow",
     "TaskDependencyRow",
     "TaskRevisionRow",
     "TaskRow",

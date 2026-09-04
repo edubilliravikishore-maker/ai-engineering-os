@@ -159,6 +159,8 @@ def test_append_only_tables_carry_no_version_column() -> None:
         "review_decisions",
         "decisions",
         "decision_acknowledgements",
+        "os_events",
+        "state_transitions_audit",
     }
     mutable = {"actors", "features", "feature_plans", "tasks", "work_packages"}
 
@@ -168,11 +170,55 @@ def test_append_only_tables_carry_no_version_column() -> None:
         assert "version" in Base.metadata.tables[name].columns, name
 
 
-def test_no_event_or_audit_table_exists_at_checkpoint_four() -> None:
-    """`os_events` and `state_transitions_audit` belong to Checkpoint 5 (ADR-005 5.13)."""
-    assert "os_events" not in Base.metadata.tables
-    assert "state_transitions_audit" not in Base.metadata.tables
-    assert len(Base.metadata.tables) == 14
+def test_the_event_and_audit_tables_landed_at_checkpoint_five() -> None:
+    """`os_events` and `state_transitions_audit` are delivered here (ADR-005 5.13, ADR-006).
+
+    This assertion is the inverse of the one Checkpoint 4 carried. The tables
+    were absent by ruling then and are present by ruling now; the count is
+    pinned in both directions so neither an omission nor an unrecorded
+    fifteenth table passes unnoticed.
+    """
+    assert "os_events" in Base.metadata.tables
+    assert "state_transitions_audit" in Base.metadata.tables
+    assert len(Base.metadata.tables) == 16
+
+
+def test_the_ordering_key_is_database_generated_and_not_application_supplied() -> None:
+    """`sequence_number` is GENERATED ALWAYS, so code cannot override it (ADR-006 6.1)."""
+    for name in ("os_events", "state_transitions_audit"):
+        column = Base.metadata.tables[name].columns["sequence_number"]
+        assert column.identity is not None, name
+        assert column.identity.always is True, name
+        assert not column.nullable, name
+
+
+def test_only_the_os_may_be_recorded_without_an_actor() -> None:
+    """The absent Actor id is bound to OS and to nothing else (ADR-006 6.8)."""
+    pairs = {
+        "os_events": ("actor_role", "actor_id"),
+        "state_transitions_audit": ("requested_by_role", "requested_by"),
+    }
+    for name, (role_column, id_column) in pairs.items():
+        table = Base.metadata.tables[name]
+        assert table.columns[id_column].nullable, name
+        assert not table.columns[role_column].nullable, name
+        guard = next(
+            c for c in table.constraints if c.name and c.name.endswith("actorless_only_for_os")
+        )
+        text = str(guard.sqltext)  # type: ignore[attr-defined]
+        assert role_column in text and id_column in text and "OS" in text, name
+
+
+def test_no_repository_for_an_append_only_table_can_update_or_delete() -> None:
+    """Append-only is enforced by the absence of a code path (ADR-005 5.4, 5.7, 5.8)."""
+    from ai_engineering_os.storage.repositories.event_repo import EventRepository
+    from ai_engineering_os.storage.repositories.transition_audit_repo import (
+        TransitionAuditRepository,
+    )
+
+    for repository in (EventRepository, TransitionAuditRepository):
+        public = {name for name in dir(repository) if not name.startswith("_")}
+        assert not public & {"save", "update", "delete", "remove"}, repository.__name__
 
 
 def test_no_deferred_lifecycle_state_is_admitted_by_any_constraint() -> None:

@@ -609,13 +609,20 @@ def test_a_structurally_rejected_transition_is_not_the_rule_engines_concern() ->
 
 
 def test_no_kernel_composer_or_orchestrator_was_created() -> None:
-    """Verifies Checkpoint 3 shipped no component that loads, validates, and mutates."""
+    """Verifies no component yet loads, validates, and mutates in one place.
+
+    ``events`` exists as of Checkpoint 5 and is checked rather than forbidden:
+    it announces what ``storage`` recorded and holds exactly four modules. The
+    component that will assemble a `RuleContext`, evaluate, mutate, and publish
+    is the Checkpoint 6 Kernel, and ``core`` is still absent (ADR-004 4.4, 4.7).
+    """
     import ai_engineering_os
 
     package_root = Path(str(ai_engineering_os.__file__)).parent
     assert not (package_root / "core").exists()
-    assert not (package_root / "events").exists()
     assert not (package_root / "api").exists()
+    event_modules = sorted(path.name for path in (package_root / "events").glob("*.py"))
+    assert event_modules == ["__init__.py", "bus.py", "listener.py", "types.py"]
     rules_modules = sorted(path.name for path in (package_root / "rules").glob("*.py"))
     assert rules_modules == [
         "__init__.py",

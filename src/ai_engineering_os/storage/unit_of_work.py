@@ -27,6 +27,7 @@ from ai_engineering_os.storage.database import get_session_factory
 from ai_engineering_os.storage.errors import PersistenceError
 from ai_engineering_os.storage.repositories.actor_repo import ActorRepository
 from ai_engineering_os.storage.repositories.decision_repo import DecisionRepository
+from ai_engineering_os.storage.repositories.event_repo import EventRepository
 from ai_engineering_os.storage.repositories.evidence_repo import EvidenceRepository
 from ai_engineering_os.storage.repositories.feature_repo import FeatureRepository
 from ai_engineering_os.storage.repositories.plan_repo import FeaturePlanRepository
@@ -34,6 +35,7 @@ from ai_engineering_os.storage.repositories.qa_repo import QAReportRepository
 from ai_engineering_os.storage.repositories.review_decision_repo import ReviewDecisionRepository
 from ai_engineering_os.storage.repositories.task_repo import TaskRepository
 from ai_engineering_os.storage.repositories.task_revision_repo import TaskRevisionRepository
+from ai_engineering_os.storage.repositories.transition_audit_repo import TransitionAuditRepository
 from ai_engineering_os.storage.repositories.work_package_repo import WorkPackageRepository
 
 __all__ = ["UnitOfWork", "unit_of_work"]
@@ -56,6 +58,8 @@ class UnitOfWork:
         self.qa_reports = QAReportRepository(session)
         self.review_decisions = ReviewDecisionRepository(session)
         self.decisions = DecisionRepository(session)
+        self.events = EventRepository(session)
+        self.transition_audit = TransitionAuditRepository(session)
 
     @property
     def session(self) -> AsyncSession:
