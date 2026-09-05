@@ -1,6 +1,6 @@
 # Project State
 
-**Last verified: 2026-09-04** (re-run the Health Check below to refresh this date)
+**Last verified: 2026-09-05** (re-run the Health Check below to refresh this date)
 
 ## Purpose
 
@@ -33,7 +33,7 @@ Checkpoint definitions live in [Implementation-Blueprint §15](../docs/02-implem
 | 3 | Rule & Policy Engine | **Done** | `5cff96b` |
 | 4 | Persistence & Storage Layer | **Done** | `c63db8a` |
 | 5 | Event Store & LISTEN/NOTIFY Bus | **Done** | see git log |
-| 6 | OS Kernel & Transactional Transition Runner | **NEXT — blocked, see below** | — |
+| 6 | OS Kernel & Transactional Transition Runner | **NEXT — unblocked by [ADR-007](../adr/ADR-007.md), not started** | — |
 | 7 | FastAPI Control Plane & Endpoints | Not started | — |
 | 8 | Typed Client SDK & E2E Vertical Slice | Not started | — |
 
@@ -50,7 +50,7 @@ Checkpoint definitions live in [Implementation-Blueprint §15](../docs/02-implem
 | `api/` | CP7 | Does not exist yet |
 | `ui/` | — | **Accepted prototype, parked.** Self-contained, imports nothing, reads nothing yet. See [ui/README.md](../ui/README.md) |
 
-## Known Blocker Ahead — Do Not Walk Into This Blind
+## The Checkpoint 6 Gate — Where It Stands
 
 Checkpoint 6 has a **blocking precondition**: the Foundation v1 Rule Coverage Gate
 ([ADR-004 4.12, 4.13](../adr/ADR-004.md)). Of the 24 required transition conditions,
@@ -58,18 +58,23 @@ Checkpoint 6 has a **blocking precondition**: the Foundation v1 Rule Coverage Ga
 (12 in `PENDING_RULE_EXPANSION`, 4 in `BLOCKED_CONDITIONS`).
 
 The gate is *designed* to fail at the end of Checkpoint 3 — that is expected, not a defect.
-But the four `BLOCKED_CONDITIONS` depend on three unresolved Builder questions
-(Blueprint §14 items 15, 16, 17: the definition of "implementation task", the Feature-level
-mandatory evidence set, and the Reviewer assignment model). **These are on the critical path
-to Checkpoint 6 and cannot be decided silently during implementation.**
+Checkpoint 5 did not touch it. **Checkpoint 6 is the checkpoint that closes it.**
 
-Checkpoint 5 did **not** touch the gate. **Checkpoint 6 does, and cannot start until those three
-questions are answered.** They are architecture decisions, not implementation details.
+**The three Builder questions that blocked it were answered on 2026-09-05** and recorded
+as [ADR-007](../adr/ADR-007.md) — the definition of "implementation task" (7.1), the
+Feature-level mandatory evidence set (7.2), and the Reviewer assignment model (7.3).
+A fourth ruling (7.4) closed the authoritative-QA-result question that had left
+`QAInScopeZeroDefectsRule` performing no selection at all.
+
+**The decisions exist; the code does not.** The three conditions stay in
+`BLOCKED_CONDITIONS` until Checkpoint 6 writes their rules, and the fourth entry,
+`TASKS_INSTANTIATED`, leaves that set when the Transition Runner exists
+([ADR-007 7.5](../adr/ADR-007.md#75-tasks_instantiated-is-discharged-by-machinery-not-by-ruling)).
+Nothing in the gate arithmetic above has moved yet.
 
 ## Known Limitations — Recorded, Not Overclaimed
 
-Two properties are recorded as limitations rather than claimed as guarantees. Both are written
-into [ADR-006](../adr/ADR-006.md) and neither is a defect:
+Three properties are recorded as limitations rather than claimed as guarantees. None is a defect:
 
 1. **A subscriber's position is held in memory** (6.6). No event is lost — `os_events` is durable
    and append-only — but events appended while a subscriber process was entirely down are not
@@ -77,8 +82,12 @@ into [ADR-006](../adr/ADR-006.md) and neither is a defect:
 2. **Staging an event does not itself emit its notification** (6.9). They are two calls, so a
    future caller could do the first and omit the second. The component that would omit it is the
    Checkpoint 6 Kernel, which does not exist yet. **This is a required check at Checkpoint 6.**
+3. **`qa_round` correctness rests on a single Kernel increment** ([ADR-007](../adr/ADR-007.md) 7.4).
+   The round is incremented on exactly one transition — the Feature rework loop — and that is
+   **not enforced by construction**. Same class of risk as 6.9 above, and it needs the same
+   treatment: an explicit Checkpoint 6 test that the rework loop increments and nothing else does.
 
-A third, inherited from ADR-005 5.8: append-only is enforced **by construction** — no repository
+A fourth, inherited from ADR-005 5.8: append-only is enforced **by construction** — no repository
 exposes an update path — not by database trigger. Code holding a raw session could still bypass it.
 
 ## The UI

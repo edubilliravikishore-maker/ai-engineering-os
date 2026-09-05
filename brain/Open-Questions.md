@@ -106,45 +106,33 @@ Relevant to Checkpoint 6.
 
 Unchanged by [ADR-004](../adr/ADR-004.md), which explicitly does not decide it. Still Open.
 
-### Which conditions cannot yet have a Rule?
+### How should review work be shared between Reviewers?
 
-Status: Open. Raised 2026-08-25.
+Status: Open. Raised 2026-09-05 by [ADR-007](../adr/ADR-007.md) 7.3.
 
-Source: [ADR-004](../adr/ADR-004.md) 4.11, and Implementation Blueprint section 14, items 15 to 17.
-
-Notes:
-
-Three declared transition conditions cannot be evaluated deterministically because the architecture has not defined what they mean. They are classified BLOCKED_CONDITIONS and must not be silently decided during implementation.
-
-- ALL_IMPLEMENTATION_TASKS_ACCEPTED. "Implementation task" is undefined across Design Sessions 001 to 009, ADR-003, and the Blueprint.
-- MANDATORY_EVIDENCE_PRESENT at Feature acceptance. No Feature-level required evidence set exists; Design Session 005's standards are per Worker type.
-- REVIEWER_ASSIGNED. No domain concept exists. Task carries no reviewer and no routing model is defined.
-
-All three are Foundation v1 required conditions under [ADR-004](../adr/ADR-004.md) 4.13, so all three block Checkpoint 6 under the safety gate of [ADR-004](../adr/ADR-004.md) 4.12.
-
-### Which QA report states a Feature's current defect position?
-
-Status: Open. Raised 2026-08-29 by the Checkpoint 3 audit.
-
-Source: [ADR-004](../adr/ADR-004.md) 4.15, and Implementation Blueprint section 14.3, item 18.
+Source: [ADR-007](../adr/ADR-007.md) 7.3, *Explicit deferral*.
 
 Notes:
 
-QA Reports are immutable audit history. An OPEN defect written into a superseded report stays OPEN in that record forever, so treating every historical report as a live acceptance blocker would make any Feature that ever failed QA permanently unacceptable, and would render the Design Session 009 rework loop IN_VALIDATION to IN_PROGRESS to ACCEPTED unreachable.
+Foundation v1 routes a submitted Task to the eligible Reviewer with the lowest ActorId. That is deterministic, which is what the gate needs, but it is not fair: with several eligible Reviewers, one receives everything.
 
-Nothing in the architecture identifies which QA Report states a Feature's current defect position.
+Harmless while the eligible set has one member, which is the case today. Owed the moment it does not.
 
-Checkpoint 3 does not decide this, and the rule layer does not attempt to. Selecting the authoritative result and evaluating it are separate concerns owned by separate components. The future OS Kernel and context loader select which QA result is authoritative; the Rule Engine evaluates whatever facts the RuleContext supplies and takes no view on how many reports it receives.
+Nothing is decided about load balancing, round robin, reviewer preference, delegation, reassignment of an already routed Task, or escalation when a Reviewer goes inactive. No reviewer queue and no assignment history exists.
 
-Repeat QA is normal. A QA Report is scoped to a Task Revision, and the rework loop from IN_VALIDATION back to IN_PROGRESS produces more of them. Nothing in the approved architecture limits a Feature to one QA Report, so a rule that rejected a Feature merely because several reports were supplied would be inventing QA workflow semantics it does not own.
+### How should non blocking work be attached to a Feature?
 
-Nothing may be invented before this is designed: no recency ordering, no sequence number, no timestamp comparison, no latest marker, no current_report_id, no QA session identity, no persistence query, and no additional RuleContext fact.
+Status: Open. Raised 2026-09-05 by [ADR-007](../adr/ADR-007.md) 7.1.
 
-Must be designed before Checkpoint 6, which owns the context loader that decides which QA Reports a rule sees.
+Source: [ADR-007](../adr/ADR-007.md) 7.1, *Explicit deferral*.
 
-Reinforced 2026-09-02 by [ADR-005](../adr/ADR-005.md) 5.9. Checkpoint 4 adds database-generated persistence metadata timestamps to every table. These are metadata only. They are not mapped into domain objects, and repositories must not use them for ordering, filtering, or authoritative QA-result selection. Storing when a row landed is permitted; using it to decide which QA Report is authoritative is not. ADR-005 adds a prohibition, not an answer, and this question stays Open.
+Notes:
 
-Known limitation while this stays open: the correctness of ZERO_UNRESOLVED_IN_SCOPE_DEFECTS depends entirely on the caller supplying the right reports. Checkpoint 3 proves the ADR-003 3.11 derivation, not the end-to-end acceptance guarantee. This is recorded as a limitation, not claimed as enforcement.
+Every non QA Task attached to a Feature blocks that Feature from entering IN_VALIDATION. There is no exemption, deliberately: a per Task non blocking flag was rejected because a gate with a per record off switch is defeated by the first mislabelled record.
+
+So a spike or a research Task attached to a Feature must reach ACCEPTED like any other. Until this is decided, the only remedy is not to attach such work to the Feature.
+
+If the need proves real, the shape of the answer is a new CapabilityType ruled deliberately, with its own entry in MANDATORY_SYSTEM_EVIDENCE. Not a flag on Task.
 
 ### Deferred capabilities recorded by ADR-003
 
@@ -166,6 +154,63 @@ These remain part of the architecture of record. They are not implemented in Fou
 [ADR-005](../adr/ADR-005.md) changes none of these either. D-1 is admitted by no status constraint. D-2 and D-3 are respected by the single actors table, which stores identity only and creates no Domain Registry. D-6 is foreclosed rather than implemented: there is no generic delete, foreign keys RESTRICT, and no ABANDONED, CANCELLED, or STOPPED state exists.
 
 ## Resolution Notes
+
+### Which conditions cannot yet have a Rule?
+
+Status: Resolved 2026-09-05 by [ADR-007](../adr/ADR-007.md) 7.1, 7.2 and 7.3.
+
+Source: [ADR-004](../adr/ADR-004.md) 4.11, and Implementation Blueprint section 14, items 15 to 17.
+
+Notes:
+
+Three declared transition conditions cannot be evaluated deterministically because the architecture has not defined what they mean. They are classified BLOCKED_CONDITIONS and must not be silently decided during implementation.
+
+- ALL_IMPLEMENTATION_TASKS_ACCEPTED. "Implementation task" is undefined across Design Sessions 001 to 009, ADR-003, and the Blueprint.
+- MANDATORY_EVIDENCE_PRESENT at Feature acceptance. No Feature-level required evidence set exists; Design Session 005's standards are per Worker type.
+- REVIEWER_ASSIGNED. No domain concept exists. Task carries no reviewer and no routing model is defined.
+
+All three are Foundation v1 required conditions under [ADR-004](../adr/ADR-004.md) 4.13, so all three block Checkpoint 6 under the safety gate of [ADR-004](../adr/ADR-004.md) 4.12.
+
+Resolved 2026-09-05. The Builder ruled on all three:
+
+- ALL_IMPLEMENTATION_TASKS_ACCEPTED. An implementation task is any Task whose capability is not QA ([ADR-007](../adr/ADR-007.md) 7.1). Recorded as a deliberate ruling, not an inference, and the QA Tasks it excludes are still covered by ALL_TASKS_ACCEPTED at Feature acceptance. A per Task non blocking flag was considered and rejected.
+- MANDATORY_EVIDENCE_PRESENT. GIT_DIFF, TEST_OUTPUT and REASONING, at least one of each across the Feature's evidence closure ([ADR-007](../adr/ADR-007.md) 7.2). A Feature level floor that does not modify MANDATORY_SYSTEM_EVIDENCE. The OS checks that the REASONING record exists, never that it is any good, and that limitation is recorded rather than glossed.
+- REVIEWER_ASSIGNED. Task gains reviewer_id; routing is by capability with self review refused, which makes [ADR-001](../adr/ADR-001.md) machine enforced for the first time ([ADR-007](../adr/ADR-007.md) 7.3).
+
+The decisions exist; the rules do not. All three conditions stay in BLOCKED_CONDITIONS until Checkpoint 6 writes them. Residual questions carried forward under Questions: reviewer workload and fairness, and non blocking work attached to a Feature.
+
+### Which QA report states a Feature's current defect position?
+
+Status: Resolved 2026-09-05 by [ADR-007](../adr/ADR-007.md) 7.4.
+
+Source: [ADR-004](../adr/ADR-004.md) 4.15, and Implementation Blueprint section 14.3, item 18.
+
+Notes:
+
+QA Reports are immutable audit history. An OPEN defect written into a superseded report stays OPEN in that record forever, so treating every historical report as a live acceptance blocker would make any Feature that ever failed QA permanently unacceptable, and would render the Design Session 009 rework loop IN_VALIDATION to IN_PROGRESS to ACCEPTED unreachable.
+
+Nothing in the architecture identifies which QA Report states a Feature's current defect position.
+
+Checkpoint 3 does not decide this, and the rule layer does not attempt to. Selecting the authoritative result and evaluating it are separate concerns owned by separate components. The future OS Kernel and context loader select which QA result is authoritative; the Rule Engine evaluates whatever facts the RuleContext supplies and takes no view on how many reports it receives.
+
+Repeat QA is normal. A QA Report is scoped to a Task Revision, and the rework loop from IN_VALIDATION back to IN_PROGRESS produces more of them. Nothing in the approved architecture limits a Feature to one QA Report, so a rule that rejected a Feature merely because several reports were supplied would be inventing QA workflow semantics it does not own.
+
+Nothing may be invented before this is designed: no recency ordering, no sequence number, no timestamp comparison, no latest marker, no current_report_id, no QA session identity, no persistence query, and no additional RuleContext fact.
+
+Must be designed before Checkpoint 6, which owns the context loader that decides which QA Reports a rule sees.
+
+Reinforced 2026-09-02 by [ADR-005](../adr/ADR-005.md) 5.9. Checkpoint 4 adds database-generated persistence metadata timestamps to every table. These are metadata only. They are not mapped into domain objects, and repositories must not use them for ordering, filtering, or authoritative QA-result selection. Storing when a row landed is permitted; using it to decide which QA Report is authoritative is not. ADR-005 adds a prohibition, not an answer, and this question stays Open.
+
+Known limitation while this stays open: the correctness of ZERO_UNRESOLVED_IN_SCOPE_DEFECTS depends entirely on the caller supplying the right reports. Checkpoint 3 proves the ADR-003 3.11 derivation, not the end-to-end acceptance guarantee. This is recorded as a limitation, not claimed as enforcement.
+
+Resolved 2026-09-05. The Feature carries a QA round ([ADR-007](../adr/ADR-007.md) 7.4). It starts at 1, the Kernel increments it on exactly one transition — the IN_VALIDATION to IN_PROGRESS rework loop — and every QA Report is stamped from the Feature's current value at the moment it is recorded, never by the reporting Actor and never from a clock. The acceptance rules consider the current round only. Earlier rounds stay readable history and are never re evaluated as live.
+
+Both prohibitions above are respected: no timestamp and no sequence number selects anything. Supersession pointers were rejected because a chain forks when one pointer is omitted; per defect resolution was rejected because it would unsettle QA Report immutability.
+
+One correction to the note above. The round filter is performed by the rule, not by the context loader ([ADR-007](../adr/ADR-007.md) 7.4). The Checkpoint 3 reasoning was right while no selector existed; one now exists as a domain field requiring no lookup, and leaving the filter to the loader would put enforcement outside the enforcement layer. RuleFact.QA_REPORTS still means every report for the Feature; the rule narrows them.
+
+The known limitation recorded above closes when Checkpoint 6 implements this.
+
 
 Questions removed from the list above, with the decision that resolved each one.
 

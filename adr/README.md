@@ -31,9 +31,10 @@ overclaimed as a guarantee.
 | [ADR-004](ADR-004.md) | Rule engine foundation & Checkpoint 3 scope | Accepted; §4.14–4.16 added 2026-08-29 |
 | [ADR-005](ADR-005.md) | Persistence architecture & Checkpoint 4 scope | Accepted 2026-09-02 |
 | [ADR-006](ADR-006.md) | Event layer architecture & Checkpoint 5 scope | Accepted 2026-09-04; §6.11 added same day |
+| [ADR-007](ADR-007.md) | The four blocked conditions & Checkpoint 6 preconditions | Accepted 2026-09-05 |
 
-**ADR-007 is the next one**, recording the four rulings that unblock Checkpoint 6.
-See [brain/Current-Focus.md](../brain/Current-Focus.md).
+**ADR-008 is the next one**, if Checkpoint 6 implementation surfaces something
+ADR-007 did not foresee. See [brain/Current-Focus.md](../brain/Current-Focus.md).
 
 ## Template
 
