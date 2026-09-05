@@ -9,6 +9,7 @@ lifecycle is resolved.
 """
 
 from ai_engineering_os.domain.actor import Actor
+from ai_engineering_os.domain.enums import ActorRole
 from ai_engineering_os.domain.identifiers import ActorId
 from ai_engineering_os.storage.mappers.actor import apply_actor, to_actor_row, to_domain_actor
 from ai_engineering_os.storage.models.actor import ActorRow
@@ -35,6 +36,26 @@ class ActorRepository(BaseRepository[ActorRow]):
             NotFoundError: if no such Actor is recorded.
         """
         return to_domain_actor(await self._require_row(actor_id))
+
+    async def list_active_by_role(self, role: ActorRole) -> tuple[Actor, ...]:
+        """Returns every active Actor holding ``role``, ordered by identifier.
+
+        The order is the routing tie-break of ADR-007 7.3 and is applied here so
+        it is a property of the query rather than of whichever caller happens to
+        sort. It is **deterministic, not fair**: with several eligible Reviewers
+        the lowest identifier receives everything. That is harmless while the
+        eligible set has one member and is recorded as owed the moment it does
+        not.
+
+        Ordering by ``id`` is ordering by a stable application-generated value,
+        not by a persistence-metadata timestamp, so ADR-005 5.9 is untouched.
+        """
+        rows = await self._rows_where(
+            ActorRow.role == role.value,
+            ActorRow.is_active.is_(True),
+            order_by=ActorRow.id,
+        )
+        return tuple(to_domain_actor(row) for row in rows)
 
     async def save(self, actor: Actor) -> None:
         """Updates the recorded Actor under optimistic locking.

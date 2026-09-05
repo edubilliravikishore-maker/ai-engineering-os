@@ -59,8 +59,8 @@ async def migrated_database() -> None:
 async def uow(migrated_database: None) -> AsyncGenerator[UnitOfWork]:
     """Provides a Unit of Work over a clean schema.
 
-    The fixture stands in for the transaction owner, which is the Checkpoint 6
-    Kernel and does not exist yet (ADR-005 5.5).
+    Persistence tests use this directly as the transaction owner. Kernel tests
+    hand it to an :class:`OSKernel`, which is the real owner (ADR-005 5.5).
     """
     _ = migrated_database
     session_factory = get_session_factory()
@@ -93,4 +93,9 @@ def worker() -> Actor:
 @pytest.fixture
 def reviewer() -> Actor:
     """An active Reviewer."""
-    return Actor(id=new_id(ActorId), role=ActorRole.REVIEWER, name="reviewer-1")
+    return Actor(
+        id=new_id(ActorId),
+        role=ActorRole.REVIEWER,
+        name="reviewer-1",
+        capabilities=frozenset({CapabilityType.BACKEND}),
+    )

@@ -33,6 +33,7 @@ from ai_engineering_os.domain import (
     new_id,
 )
 from ai_engineering_os.domain.qa import TestResult as QATestResult
+from ai_engineering_os.domain.task import REVIEWER_REQUIRED_STATUSES
 from ai_engineering_os.rules import (
     MANDATORY_SYSTEM_EVIDENCE,
     AllTasksAcceptedRule,
@@ -62,6 +63,7 @@ def _task(
     status: TaskStatus = TaskStatus.CREATED,
     dependencies: tuple[TaskId, ...] = (),
     worker_id: ActorId | None = None,
+    reviewer_id: ActorId | None = None,
 ) -> Task:
     return Task(
         id=new_id(TaskId),
@@ -73,6 +75,8 @@ def _task(
         status=status,
         dependencies=dependencies,
         assigned_worker_id=worker_id,
+        reviewer_id=reviewer_id
+        or (new_id(ActorId) if status in REVIEWER_REQUIRED_STATUSES else None),
         active_revision_number=1 if status is TaskStatus.ACCEPTED else 0,
     )
 

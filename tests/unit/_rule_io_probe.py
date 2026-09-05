@@ -67,12 +67,24 @@ def _build_context() -> RuleContext:
         name="backend-worker-1",
         capabilities=frozenset({CapabilityType.BACKEND}),
     )
+    reviewer = Actor(
+        id=ActorId(uuid4()),
+        role=ActorRole.REVIEWER,
+        name="reviewer-1",
+        capabilities=frozenset({CapabilityType.BACKEND}),
+    )
     return RuleContext(
         candidate_worker=worker,
+        candidate_reviewers=(reviewer,),
+        requesting_actor=worker,
         task=task,
+        task_revisions=(),
         feature=feature,
         feature_tasks=(task,),
+        feature_plans=(),
         referenced_tasks=(),
+        work_packages=(),
+        review_decisions=(),
         evidence=(),
         qa_reports=(),
     )

@@ -80,11 +80,24 @@ class QADefect(DomainModel):
 
 
 class QAReport(DomainModel):
-    """A structured, machine-first QA verification record."""
+    """A structured, machine-first QA verification record.
+
+    ``qa_round`` records **which build-and-check cycle of the Feature this report
+    belongs to** (ADR-007 7.4). It is stamped by the Kernel from the Feature's
+    own current round at the moment the report is recorded — never supplied by
+    the reporting Actor and never derived from a clock — so a report written
+    during one round but submitted after rework began stays in the round it was
+    written for.
+
+    A report is never edited, so its round never changes. Reports from earlier
+    rounds remain readable history and are never re-evaluated as the Feature's
+    current defect position.
+    """
 
     id: QAReportId
     feature_id: FeatureId
     status: QAStatus
+    qa_round: int = Field(default=1, ge=1)
     task_revision_id: TaskRevisionId | None = None
     is_final_pass: bool = False
     tested_scope: tuple[NonEmptyText, ...] = ()

@@ -259,7 +259,13 @@ def test_task_revisions_carry_no_status_column() -> None:
 
 
 def test_no_qa_report_recency_or_latest_marker_exists() -> None:
-    """The authoritative QA-result mechanism is not invented here (ADR-004 4.15)."""
+    """The QA-result mechanism is a round, never a recency marker (ADR-007 7.4).
+
+    ADR-004 4.15 forbade inventing this; ADR-007 7.4 answers it, and answers it
+    with a Kernel-owned round rather than any of the shapes below. Every one of
+    them remains forbidden: the point of the ruling was that recency does not
+    decide which QA result is authoritative.
+    """
     columns = set(Base.metadata.tables["qa_reports"].columns.keys())
     for invented in (
         "sequence_number",
@@ -269,12 +275,36 @@ def test_no_qa_report_recency_or_latest_marker_exists() -> None:
         "supersedes",
     ):
         assert invented not in columns
+    assert "qa_round" in columns
 
 
-def test_tasks_carry_no_reviewer_column() -> None:
-    """REVIEWER_ASSIGNED remains a BLOCKED_CONDITION; no routing model exists."""
-    columns = set(Base.metadata.tables["tasks"].columns.keys())
-    assert not {c for c in columns if "reviewer" in c}
+def test_qa_round_is_recorded_on_both_sides_and_never_defaults() -> None:
+    """The round is supplied by the Kernel, never by the database (ADR-007 7.4).
+
+    A server default would let a caller omit the round and receive a
+    plausible-looking 1, which is the silent wrong answer the ruling exists to
+    prevent.
+    """
+    for table_name in ("features", "qa_reports"):
+        column = Base.metadata.tables[table_name].columns["qa_round"]
+        assert not column.nullable, table_name
+        assert column.server_default is None, table_name
+        assert column.default is None, table_name
+
+
+def test_tasks_record_a_reviewer_who_is_never_the_worker() -> None:
+    """ADR-007 7.3 adds the reviewer; ADR-001 forbids it being the Worker.
+
+    The domain model already refuses to construct that Task. The constraint is
+    what makes it unstorable, so a path that bypasses the model cannot record it
+    either.
+    """
+    table = Base.metadata.tables["tasks"]
+    reviewer = table.columns["reviewer_id"]
+    assert reviewer.nullable, "a Task carries no Reviewer before routing"
+
+    constraints = {c.name for c in table.constraints}
+    assert "ck_tasks_reviewer_is_not_worker" in constraints
 
 
 def test_every_foreign_key_restricts_deletion() -> None:

@@ -37,10 +37,10 @@ async def test_a_row_violating_a_domain_invariant_fails_to_reconstruct(
     await uow.session.execute(
         text(
             "INSERT INTO features (id, slug, title, goal, coordinator_id, status, "
-            "requirements, in_scope, out_of_scope, acceptance_criteria, "
+            "requirements, in_scope, out_of_scope, acceptance_criteria, qa_round, "
             "created_at, updated_at, version) "
             "VALUES (:id, 'broken', 't', 'g', :coordinator, 'PLANNED', "
-            "'[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, now(), now(), 1)"
+            "'[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 1, now(), now(), 1)"
         ),
         {"id": feature_id, "coordinator": coordinator.id},
     )
@@ -60,19 +60,19 @@ async def test_reconstruction_does_not_silently_repair(uow: UnitOfWork, coordina
     await uow.session.execute(
         text(
             "INSERT INTO features (id, slug, title, goal, coordinator_id, status, "
-            "requirements, in_scope, out_of_scope, acceptance_criteria, "
+            "requirements, in_scope, out_of_scope, acceptance_criteria, qa_round, "
             "created_at, updated_at, version) "
             "VALUES (:id, 'f', 't', 'g', :coordinator, 'DRAFT', "
-            "'[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, now(), now(), 1)"
+            "'[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 1, now(), now(), 1)"
         ),
         {"id": feature_id, "coordinator": coordinator.id},
     )
     report_id = new_id(QAReportId)
     await uow.session.execute(
         text(
-            "INSERT INTO qa_reports (id, feature_id, status, is_final_pass, tested_scope, "
-            "results, evidence_ids, created_at) "
-            "VALUES (:id, :feature, 'PASSED', false, '[]'::jsonb, '[]'::jsonb, "
+            "INSERT INTO qa_reports (id, feature_id, status, qa_round, is_final_pass, "
+            "tested_scope, results, evidence_ids, created_at) "
+            "VALUES (:id, :feature, 'PASSED', 1, false, '[]'::jsonb, '[]'::jsonb, "
             "'[]'::jsonb, now())"
         ),
         {"id": report_id, "feature": feature_id},

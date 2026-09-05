@@ -18,14 +18,36 @@ from ai_engineering_os.domain.conditions import TransitionCondition
 from ai_engineering_os.domain.errors import RuleDefinitionError
 from ai_engineering_os.rules.acceptance import (
     AllTasksAcceptedRule,
+    ImplementationTasksAcceptedRule,
     QAFinalPassRecordedRule,
     QAInScopeZeroDefectsRule,
 )
-from ai_engineering_os.rules.authority import WorkerCapabilityMatchesRule
+from ai_engineering_os.rules.authority import (
+    RequesterIsAssignedWorkerRule,
+    ReviewerAssignedRule,
+    WorkerCapabilityMatchesRule,
+    WorkerIsActiveRule,
+)
 from ai_engineering_os.rules.base import Rule
 from ai_engineering_os.rules.dependencies import DependenciesAcceptedRule
 from ai_engineering_os.rules.engine import RuleEngine
-from ai_engineering_os.rules.evidence import SystemEvidenceRequiredRule
+from ai_engineering_os.rules.evidence import FeatureEvidenceRequiredRule, SystemEvidenceRequiredRule
+from ai_engineering_os.rules.planning import (
+    FeaturePlanAttachedRule,
+    OriginatingPlanActiveRule,
+    PlanHasTaskDefinitionsRule,
+    PlanIsReadyRule,
+)
+from ai_engineering_os.rules.submission import (
+    ClaimsDefinedRule,
+    VerificationGuidePresentRule,
+    WorkPackagePresentRule,
+)
+from ai_engineering_os.rules.verification import (
+    QAReportPassedRule,
+    ReviewDecisionApprovedRule,
+    TestExecutionEvidencePresentRule,
+)
 
 __all__ = [
     "BLOCKED_CONDITIONS",
@@ -40,12 +62,27 @@ __all__ = [
 
 RULES: tuple[Rule, ...] = (
     # Stage 1 — Actor / authority
+    WorkerIsActiveRule(),
     WorkerCapabilityMatchesRule(),
+    RequesterIsAssignedWorkerRule(),
+    ReviewerAssignedRule(),
     # Stage 3 — Plan / dependencies
+    FeaturePlanAttachedRule(),
+    PlanHasTaskDefinitionsRule(),
+    PlanIsReadyRule(),
+    OriginatingPlanActiveRule(),
     DependenciesAcceptedRule(),
     # Stage 4 — Evidence
+    WorkPackagePresentRule(),
+    ClaimsDefinedRule(),
+    VerificationGuidePresentRule(),
     SystemEvidenceRequiredRule(),
+    FeatureEvidenceRequiredRule(),
     # Stage 5 — Acceptance
+    ReviewDecisionApprovedRule(),
+    QAReportPassedRule(),
+    TestExecutionEvidencePresentRule(),
+    ImplementationTasksAcceptedRule(),
     AllTasksAcceptedRule(),
     QAFinalPassRecordedRule(),
     QAInScopeZeroDefectsRule(),
@@ -71,22 +108,13 @@ PENDING_RULE_EXPANSION: frozenset[TransitionCondition] = frozenset(
         # Deterministically computable against the current domain model, and
         # deferred by scope decision alone (ADR-004 4.10). Each is a scope
         # decision, never an unanswered architectural question.
-        TransitionCondition.WORKER_IS_ACTIVE,
-        TransitionCondition.REQUESTER_IS_ASSIGNED_WORKER,
+        #
+        # Every remaining entry governs a **rework or branch edge** that the
+        # Foundation v1 vertical slice does not walk (ADR-004 4.13), so none is
+        # required by the Checkpoint 6 gate. Checkpoint 6 wrote the twelve that
+        # the slice does walk; these are what is left.
         TransitionCondition.TASK_HAS_DEPENDENCIES,
-        # Declared by ADR-004 4.8 on both `-> READY` edges; its rule is owed to
-        # Checkpoint 6 by ADR-003 3.12.
-        TransitionCondition.ORIGINATING_PLAN_ACTIVE,
-        TransitionCondition.FEATURE_PLAN_ATTACHED,
-        TransitionCondition.PLAN_HAS_TASK_DEFINITIONS,
-        TransitionCondition.PLAN_IS_READY,
-        TransitionCondition.WORK_PACKAGE_PRESENT,
-        TransitionCondition.CLAIMS_DEFINED,
-        TransitionCondition.VERIFICATION_GUIDE_PRESENT,
-        TransitionCondition.REVIEW_DECISION_APPROVED,
         TransitionCondition.REVIEW_DECISION_CHANGES_REQUESTED,
-        TransitionCondition.QA_REPORT_PASSED,
-        TransitionCondition.TEST_EXECUTION_EVIDENCE_PRESENT,
         TransitionCondition.QA_REPORT_FAILED,
         TransitionCondition.INCREMENTED_REVISION_CREATED,
         TransitionCondition.QA_DEFECT_FINDINGS_RECORDED,
@@ -117,17 +145,10 @@ guaranteeing validator rather than by writing an unfalsifiable rule.
 BLOCKED_CONDITIONS: frozenset[TransitionCondition] = frozenset(
     {
         # Plan activation *performs* the instantiation (ADR-003 3.12), so
-        # evaluating it before the Checkpoint 6 runner acts is meaningless.
+        # evaluating it before the runner acts is meaningless. Not an owed
+        # decision and never was (ADR-007 7.5): the Transition Runner asserts
+        # the outcome it has just produced, inside the same transaction.
         TransitionCondition.TASKS_INSTANTIATED,
-        # "Implementation task" is undefined across Design Sessions 001-009,
-        # ADR-003, and the Blueprint. Needs a Builder ruling.
-        TransitionCondition.ALL_IMPLEMENTATION_TASKS_ACCEPTED,
-        # No Feature-level required evidence set exists; Design Session 005's
-        # standards are per-Worker-type. Needs a Builder ruling.
-        TransitionCondition.MANDATORY_EVIDENCE_PRESENT,
-        # No domain concept exists: Task carries no reviewer and there is no
-        # routing model. Needs a Builder ruling plus Checkpoint 6 machinery.
-        TransitionCondition.REVIEWER_ASSIGNED,
     }
 )
 """Cannot be written without a Builder ruling or later-checkpoint machinery.
@@ -135,6 +156,11 @@ BLOCKED_CONDITIONS: frozenset[TransitionCondition] = frozenset(
 An **owed decision**, deliberately kept distinct from ``PENDING_RULE_EXPANSION``:
 collapsing the two would let an unanswered architectural question hide inside a
 backlog (ADR-004 4.11).
+
+**Three of the original four were discharged by ADR-007** — the definition of
+"implementation task" (7.1), the Feature-level mandatory evidence set (7.2), and
+the Reviewer assignment and routing model (7.3). Each is now enforced by a
+registered rule above. The fourth entry needed no ruling at all, only the runner.
 """
 
 FOUNDATION_V1_REQUIRED_CONDITIONS: frozenset[TransitionCondition] = frozenset(
@@ -185,9 +211,19 @@ layer states the result rather than importing ``state`` to compute it.
 
 **The Checkpoint 6 gate (ADR-004 4.12):** the Kernel may not operate against
 Foundation v1 while any of these lacks enforcement — that is, until this set is
-a subset of ``IMPLEMENTED_CONDITIONS | SATISFIED_BY_DOMAIN_INVARIANT``. The gate
-is **expected to fail at the end of Checkpoint 3, by design**: 8 of 24 are
-covered. It is a blocking precondition on Checkpoint 6, not an untracked debt.
+a subset of ``IMPLEMENTED_CONDITIONS | SATISFIED_BY_DOMAIN_INVARIANT``.
+
+The gate was **expected to fail at the end of Checkpoint 3, by design**: 8 of 24
+were covered, and it was recorded as a blocking precondition on Checkpoint 6
+rather than as untracked debt. **Checkpoint 6 closes it.** Twenty-one of the
+twenty-four are enforced by a registered rule and two by a proven domain
+invariant.
+
+``TASKS_INSTANTIATED`` is the one entry that is required and has no rule, and it
+is the one the Transition Runner discharges by construction (ADR-007 7.5): it
+performs the instantiation inside the transaction and asserts the outcome it has
+just produced. The gate check accounts for it explicitly rather than by
+pretending a rule exists.
 """
 
 _CLASSIFICATION: tuple[tuple[str, frozenset[TransitionCondition]], ...] = (

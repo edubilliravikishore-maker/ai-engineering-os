@@ -42,6 +42,14 @@ class TaskRow(RowMetadataMixin, Base):
         status_check("capability", CapabilityType, name="ck_tasks_capability"),
         CheckConstraint("active_revision_number >= 0", name="ck_tasks_active_revision_number"),
         CheckConstraint("updated_at >= created_at", name="ck_tasks_timestamp_order"),
+        # ADR-001, ADR-007 7.3: the Worker never reviews their own work. The
+        # domain model already makes it unconstructible; the constraint makes it
+        # unstorable, so no path that bypasses the model can record it either.
+        CheckConstraint(
+            "reviewer_id IS NULL OR assigned_worker_id IS NULL "
+            "OR reviewer_id <> assigned_worker_id",
+            name="ck_tasks_reviewer_is_not_worker",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -56,6 +64,9 @@ class TaskRow(RowMetadataMixin, Base):
     capability: Mapped[str] = status_column()
     status: Mapped[str] = status_column()
     assigned_worker_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("actors.id", ondelete="RESTRICT"), nullable=True
+    )
+    reviewer_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("actors.id", ondelete="RESTRICT"), nullable=True
     )
     active_revision_number: Mapped[int] = mapped_column(Integer, nullable=False)

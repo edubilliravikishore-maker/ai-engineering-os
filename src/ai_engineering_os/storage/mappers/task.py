@@ -37,6 +37,7 @@ def to_domain_task(row: TaskRow, dependencies: Sequence[TaskDependencyRow]) -> T
             "capability": row.capability,
             "status": row.status,
             "assigned_worker_id": row.assigned_worker_id,
+            "reviewer_id": row.reviewer_id,
             "dependencies": [edge.depends_on_task_id for edge in ordered],
             "active_revision_number": row.active_revision_number,
             "created_at": row.created_at,
@@ -59,6 +60,7 @@ def apply_task(task: Task, row: TaskRow) -> None:
     row.capability = task.capability.value
     row.status = task.status.value
     row.assigned_worker_id = task.assigned_worker_id
+    row.reviewer_id = task.reviewer_id
     row.active_revision_number = task.active_revision_number
     row.created_at = task.created_at
     row.updated_at = task.updated_at

@@ -4,6 +4,7 @@ Design Session 006: a Task has one identity and evolves through Revisions.
 History is never rewritten and only one Revision is active at a time.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from pydantic import Field, model_validator
@@ -24,6 +25,8 @@ from ai_engineering_os.domain.identifiers import (
 
 __all__ = [
     "ASSIGNMENT_REQUIRED_STATUSES",
+    "work_authors",
+    "REVIEWER_REQUIRED_STATUSES",
     "REVISION_REQUIRED_STATUSES",
     "UNASSIGNED_STATUSES",
     "Task",
@@ -50,6 +53,22 @@ REVISION_REQUIRED_STATUSES: frozenset[TaskStatus] = frozenset(
 )
 """Statuses only reachable after a Worker has submitted a Revision."""
 
+REVIEWER_REQUIRED_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.IN_REVIEW,
+        TaskStatus.IN_QA,
+        TaskStatus.REVISION_REQUIRED,
+        TaskStatus.ACCEPTED,
+    }
+)
+"""Statuses only reachable once a Reviewer has been routed the Task (ADR-007 7.3).
+
+``REVISION_REQUIRED`` is included because both edges into it leave a review or a
+QA pass that a Reviewer had already been routed. ``IN_PROGRESS`` is **not**: a
+Task re-entering it on a new Revision keeps the Reviewer it already has, so the
+field is not required there and is never cleared.
+"""
+
 
 class Task(DomainModel):
     """The smallest unit of work assigned to exactly one Worker.
@@ -74,6 +93,7 @@ class Task(DomainModel):
     capability: CapabilityType
     status: TaskStatus = TaskStatus.CREATED
     assigned_worker_id: ActorId | None = None
+    reviewer_id: ActorId | None = None
     dependencies: tuple[TaskId, ...] = ()
     active_revision_number: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
@@ -100,6 +120,38 @@ class Task(DomainModel):
             raise ValueError(f"A Task in status {self.status} cannot record an assigned Worker")
         if self.status in ASSIGNMENT_REQUIRED_STATUSES and self.assigned_worker_id is None:
             raise ValueError(f"A Task in status {self.status} must record an assigned Worker")
+        return self
+
+    @model_validator(mode="after")
+    def _review_routing_must_match_status(self) -> "Task":
+        """A Task under review or past it records the Reviewer routed to it.
+
+        ADR-007 7.3. The Reviewer is recorded at routing, so a Task that has not
+        yet been worked on cannot carry one, and a Task from ``IN_REVIEW``
+        onwards must.
+        """
+        if self.status in UNASSIGNED_STATUSES and self.reviewer_id is not None:
+            raise ValueError(f"A Task in status {self.status} cannot record a Reviewer")
+        if self.status in REVIEWER_REQUIRED_STATUSES and self.reviewer_id is None:
+            raise ValueError(f"A Task in status {self.status} must record a Reviewer")
+        return self
+
+    @model_validator(mode="after")
+    def _reviewer_is_never_the_worker(self) -> "Task":
+        """The Worker who did the work never reviews it (ADR-001, ADR-007 7.3).
+
+        Enforced here as well as by the Rule Engine on purpose. The rule refuses
+        the transition that would route it; this makes the state **unconstructible**,
+        so no other path — a mapper, a repository, a future caller — can produce a
+        Task that violates ADR-001. Full eligibility still belongs to the rule:
+        this model cannot see the Task's Revisions and so cannot check authorship.
+        """
+        if (
+            self.reviewer_id is not None
+            and self.assigned_worker_id is not None
+            and self.reviewer_id == self.assigned_worker_id
+        ):
+            raise ValueError("A Task's Reviewer cannot be the Worker assigned to it")
         return self
 
     @model_validator(mode="after")
@@ -135,6 +187,24 @@ class Task(DomainModel):
                 received_revision_number=revision_number,
             )
         return self._evolve(active_revision_number=revision_number, updated_at=at or utc_now())
+
+    def routed_to_reviewer(self, reviewer_id: ActorId, *, at: datetime | None = None) -> "Task":
+        """Returns a new IN_REVIEW Task routed to ``reviewer_id``.
+
+        Routing and the status change are **one operation** so a Task can never
+        be left recorded as under review with no Reviewer, or carrying a Reviewer
+        it was never routed to. Every invariant above revalidates, including the
+        refusal to record the assigned Worker as the Reviewer.
+        """
+        return self._evolve(
+            status=TaskStatus.IN_REVIEW,
+            reviewer_id=reviewer_id,
+            updated_at=at or utc_now(),
+        )
+
+    def is_reviewed_by(self, actor_id: ActorId) -> bool:
+        """Returns whether ``actor_id`` is the Reviewer routed this Task."""
+        return self.reviewer_id is not None and self.reviewer_id == actor_id
 
     def is_assigned_to(self, actor_id: ActorId) -> bool:
         """Returns whether ``actor_id`` is the Worker recorded on this Task."""
@@ -232,3 +302,26 @@ class TaskRevisionHistory(DomainModel):
             task_id=self.task_id,
             revisions=(*self.revisions, revision),
         )
+
+
+def work_authors(task: Task, revisions: Sequence[TaskRevision]) -> frozenset[ActorId]:
+    """Returns every Actor who performed work on ``task``.
+
+    The assigned Worker **and** the author of every Revision. A Task can change
+    hands, so the current assignment alone is not the whole answer: an Actor who
+    authored an earlier Revision worked on this Task whether or not they are
+    still assigned to it.
+
+    This lives in the domain layer because two layers that may not import each
+    other both need it and must agree. ``core`` routes a Task away from its
+    authors; ``rules`` refuses the transition if it was not. If each computed
+    "who worked on this" separately, the router and the rule could disagree, and
+    the disagreement would surface as a Task that can be routed but never
+    reviewed.
+    """
+    authors = {
+        revision.created_by_worker_id for revision in revisions if revision.task_id == task.id
+    }
+    if task.assigned_worker_id is not None:
+        authors.add(task.assigned_worker_id)
+    return frozenset(authors)

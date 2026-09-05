@@ -11,7 +11,7 @@ The four scope and requirement lists are stored as JSONB (ADR-005 5.2): ADR-003
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +34,7 @@ class FeatureRow(RowMetadataMixin, Base):
     __table_args__ = (
         status_check("status", FeatureStatus, name="ck_features_status"),
         CheckConstraint("updated_at >= created_at", name="ck_features_timestamp_order"),
+        CheckConstraint("qa_round >= 1", name="ck_features_qa_round"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -49,6 +50,8 @@ class FeatureRow(RowMetadataMixin, Base):
     in_scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     out_of_scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     acceptance_criteria: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+    qa_round: Mapped[int] = mapped_column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

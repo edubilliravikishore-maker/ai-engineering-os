@@ -1,13 +1,21 @@
-"""Feature acceptance rules — evaluation stage 5 (ADR-004 4.10).
+"""Feature acceptance rules — evaluation stage 5 (ADR-004 4.10; ADR-007 7.1, 7.4).
 
-These three rules govern Feature ``IN_VALIDATION -> ACCEPTED``. Two of them are
-independent, so their failures aggregate into one explicit missing list; the
-third declares a prerequisite, so it is skipped rather than producing a
-misleading verdict once its premise has collapsed.
+Four rules across the two Feature gates.
+
+``ImplementationTasksAcceptedRule`` governs ``IN_PROGRESS -> IN_VALIDATION``:
+may checking begin? The other three govern ``IN_VALIDATION -> ACCEPTED``: is
+this Feature done? Two of those are independent, so their failures aggregate
+into one explicit missing list; the third declares a prerequisite, so it is
+skipped rather than producing a misleading verdict once its premise has
+collapsed.
+
+**The QA rules select the current round** (ADR-007 7.4). See
+:mod:`ai_engineering_os.rules.selection` for why that selection is performed
+here rather than by the caller.
 """
 
 from ai_engineering_os.domain.conditions import TransitionCondition
-from ai_engineering_os.domain.enums import TaskStatus
+from ai_engineering_os.domain.enums import CapabilityType, TaskStatus
 from ai_engineering_os.domain.feature import Feature
 from ai_engineering_os.domain.identifiers import TaskId
 from ai_engineering_os.domain.qa import QADefect
@@ -16,12 +24,84 @@ from ai_engineering_os.rules.base import Rule
 from ai_engineering_os.rules.codes import RuleCode, RuleId, RuleStage
 from ai_engineering_os.rules.context import RuleContext, RuleFact
 from ai_engineering_os.rules.results import RuleDetail, RuleResult
+from ai_engineering_os.rules.selection import current_round_reports
 
 __all__ = [
     "AllTasksAcceptedRule",
+    "ImplementationTasksAcceptedRule",
     "QAFinalPassRecordedRule",
     "QAInScopeZeroDefectsRule",
 ]
+
+
+class ImplementationTasksAcceptedRule(Rule):
+    """Every implementation Task must be ACCEPTED before validation may begin.
+
+    Blueprint 5.1 ``IN_PROGRESS -> IN_VALIDATION``, ruled by ADR-007 7.1.
+
+    **An implementation Task is any Task whose capability is not QA.** That is a
+    Builder ruling, not an inference. Blueprint 14 item 15 was right that
+    *deriving* the definition inside an implementation would be inventing
+    architecture; the same predicate stated deliberately, with its rationale and
+    its cost recorded, is not. What was forbidden was the silence.
+
+    **Why QA-capability Tasks are excluded.** A QA Task on a Feature exists to
+    verify that Feature. Requiring it to be ``ACCEPTED`` before the Feature may
+    enter ``IN_VALIDATION`` would make validation wait on work whose purpose is
+    to perform validation, and the condition would be unsatisfiable for any
+    Feature carrying one.
+
+    **Nothing escapes acceptance.** ``AllTasksAcceptedRule`` covers *every* Task
+    including QA at the next gate. The two rules differ by exactly the QA Tasks,
+    which is why both exist: this one decides when checking may **begin**, that
+    one decides when the Feature is **done**.
+
+    **There is no exemption and no off-switch.** A research or spike Task
+    attached to a Feature blocks it like any other, because a per-Task
+    non-blocking flag would be defeated by the first mislabelled record. If
+    non-blocking work proves genuinely necessary, ADR-007 7.1 records that the
+    answer is a new ``CapabilityType`` ruled deliberately, not a flag.
+    """
+
+    rule_id = RuleId.IMPLEMENTATION_TASKS_ACCEPTED
+    condition = TransitionCondition.ALL_IMPLEMENTATION_TASKS_ACCEPTED
+    stage = RuleStage.ACCEPTANCE
+    required_facts = frozenset({RuleFact.FEATURE, RuleFact.FEATURE_TASKS})
+
+    def evaluate(self, context: RuleContext) -> RuleResult:
+        """Returns whether every non-QA Task of the Feature is ACCEPTED."""
+        feature = context.require_feature()
+        implementation = tuple(
+            task
+            for task in context.require_feature_tasks()
+            if task.feature_id == feature.id and task.capability is not CapabilityType.QA
+        )
+
+        if not implementation:
+            return self.failed(
+                RuleCode.NO_IMPLEMENTATION_TASKS_RECORDED,
+                f"Feature {feature.id} records no implementation Task, so there is nothing "
+                f"built to validate",
+                RuleDetail.of("feature_id", [feature.id]),
+            )
+
+        unaccepted = tuple(
+            task for task in implementation if task.status is not TaskStatus.ACCEPTED
+        )
+        if unaccepted:
+            return self.failed(
+                RuleCode.IMPLEMENTATION_TASK_NOT_ACCEPTED,
+                f"Feature {feature.id} has {len(unaccepted)} implementation Task(s) that are "
+                f"not ACCEPTED",
+                RuleDetail.of("unaccepted_task_ids", (task.id for task in unaccepted)),
+                RuleDetail.of("unaccepted_task_statuses", (task.status for task in unaccepted)),
+                RuleDetail.of("unaccepted_task_capabilities", (t.capability for t in unaccepted)),
+                RuleDetail.of("feature_id", [feature.id]),
+            )
+
+        return self.passed(
+            f"All {len(implementation)} implementation Tasks of Feature {feature.id} are ACCEPTED"
+        )
 
 
 class AllTasksAcceptedRule(Rule):
@@ -72,6 +152,11 @@ class QAFinalPassRecordedRule(Rule):
     (``QAReport.is_valid_final_pass``): a Final Pass that passed with zero
     unresolved defects. A report that merely claims to be a final pass is not
     accepted as one.
+
+    **Only the current QA round counts** (ADR-007 7.4). A Final Pass recorded
+    before the Feature was sent back for rework certified work that has since
+    changed, so it cannot certify the Feature now. It stays on record as what
+    was true then.
     """
 
     rule_id = RuleId.QA_FINAL_PASS_RECORDED
@@ -84,14 +169,14 @@ class QAFinalPassRecordedRule(Rule):
         feature = context.require_feature()
         final_passes = tuple(
             report
-            for report in context.require_qa_reports()
-            if report.feature_id == feature.id and report.is_final_pass
+            for report in current_round_reports(feature, context.require_qa_reports())
+            if report.is_final_pass
         )
 
         if not final_passes:
             return self.failed(
                 RuleCode.MISSING_QA_FINAL_PASS,
-                f"Feature {feature.id} records no QA Final Pass",
+                f"Feature {feature.id} records no QA Final Pass in QA round {feature.qa_round}",
                 RuleDetail.of("feature_id", [feature.id]),
             )
 
@@ -110,7 +195,9 @@ class QAFinalPassRecordedRule(Rule):
                 RuleDetail.of("feature_id", [feature.id]),
             )
 
-        return self.passed(f"Feature {feature.id} records a valid QA Final Pass")
+        return self.passed(
+            f"Feature {feature.id} records a valid QA Final Pass in QA round {feature.qa_round}"
+        )
 
 
 class QAInScopeZeroDefectsRule(Rule):
@@ -143,25 +230,32 @@ class QAInScopeZeroDefectsRule(Rule):
     Only **unresolved** (``OPEN``) defects are scope-resolved: a defect QA has
     already resolved does not block acceptance regardless of its association.
 
-    **Caller-supplied precondition (ADR-004 4.4, 4.15).** This rule evaluates
-    the QA Reports it is given and takes no view on how many there are. Which
-    QA result is **authoritative** for a Feature is deliberately **not decided
-    here and is not this rule's concern**: selecting it is the responsibility of
-    the Checkpoint 6 Kernel / context loader that assembles the ``RuleContext``.
+    **Which QA Reports count (ADR-007 7.4).** Only those of the Feature's
+    **current QA round**. One round is one build-and-check cycle: the build, its
+    Task-level QA, and the Feature-level validation that follows it.
 
-    That boundary matters. QA Reports are immutable audit history, and repeat QA
-    is normal — a report exists per Task Revision, and the Blueprint 5.1
-    ``IN_VALIDATION -> IN_PROGRESS`` rework loop produces more of them. A rule
-    that inspected how many reports it received, or that preferred one over
-    another, would be inventing QA workflow semantics it does not own. So this
-    rule invents none: no ordering, no recency, no "latest" marker, no session
-    identity, and no additional context fact.
+    This rule performed no selection at all until ADR-007 7.4 was ruled, and said
+    so in this docstring. The Checkpoint 3 reasoning was right at the time — QA
+    Reports are immutable history, repeat QA is normal, the ``IN_VALIDATION ->
+    IN_PROGRESS`` rework loop produces more of them, and preferring one report
+    over another with no architectural selector would have been inventing QA
+    workflow semantics this rule does not own.
 
-    The consequence is stated plainly rather than guarded against: if a caller
-    supplies superseded reports, their unresolved defects are evaluated as
-    supplied. Preventing that is the loader's job, not this rule's, and the
-    authoritative-QA-result mechanism remains an open architectural question
-    (ADR-004 *Questions Not Decided*, item 7).
+    **A selector now exists, and the filter belongs here rather than in the
+    caller.** ``qa_round`` is a domain field requiring no lookup, no ordering, no
+    recency comparison and no timestamp. Leaving the filter to the context loader
+    would put enforcement outside the enforcement layer: every caller would have
+    to get it right, and one that did not would produce a silently wrong verdict
+    instead of a refusal.
+
+    ``RuleFact.QA_REPORTS`` still means *every* report recorded against the
+    Feature. This rule narrows them, and it narrows them the same way
+    ``QAFinalPassRecordedRule`` does, through the one shared selector.
+
+    The consequence the old note recorded — that superseded reports were
+    evaluated as supplied — no longer holds. An ``OPEN`` defect from round 1
+    remains ``OPEN`` in that record forever, and stops blocking the Feature once
+    round 2 begins.
     """
 
     rule_id = RuleId.QA_IN_SCOPE_ZERO_DEFECTS
@@ -175,9 +269,7 @@ class QAInScopeZeroDefectsRule(Rule):
     def evaluate(self, context: RuleContext) -> RuleResult:
         """Returns whether any unresolved defect resolves to this Feature."""
         feature = context.require_feature()
-        reports = tuple(
-            report for report in context.require_qa_reports() if report.feature_id == feature.id
-        )
+        reports = current_round_reports(feature, context.require_qa_reports())
 
         known_tasks: dict[TaskId, Task] = {
             task.id: task
@@ -200,6 +292,7 @@ class QAInScopeZeroDefectsRule(Rule):
             RuleDetail.of("scope_unresolved_defect_titles", (d.title for d in unresolved_scope)),
             RuleDetail.of("in_scope_defect_ids", (d.id for d in blocking)),
             RuleDetail.of("in_scope_defect_titles", (d.title for d in blocking)),
+            RuleDetail.of("qa_round", [feature.qa_round]),
             RuleDetail.of("feature_id", [feature.id]),
         )
 
@@ -218,7 +311,10 @@ class QAInScopeZeroDefectsRule(Rule):
                 *details,
             )
 
-        return self.passed(f"Feature {feature.id} carries no unresolved in-scope defect")
+        return self.passed(
+            f"Feature {feature.id} carries no unresolved in-scope defect in QA round "
+            f"{feature.qa_round}"
+        )
 
 
 def _is_scope_unresolved(defect: QADefect, known_tasks: dict[TaskId, Task]) -> bool:

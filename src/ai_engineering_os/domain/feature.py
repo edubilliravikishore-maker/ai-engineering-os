@@ -28,6 +28,7 @@ class Feature(DomainModel):
     in_scope: tuple[NonEmptyText, ...] = ()
     out_of_scope: tuple[NonEmptyText, ...] = ()
     acceptance_criteria: tuple[NonEmptyText, ...] = ()
+    qa_round: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -61,3 +62,20 @@ class Feature(DomainModel):
     def with_status(self, status: FeatureStatus, *, at: datetime | None = None) -> "Feature":
         """Returns a new Feature carrying ``status``. The original is untouched."""
         return self._evolve(status=status, updated_at=at or utc_now())
+
+    def opening_next_qa_round(self, *, at: datetime | None = None) -> "Feature":
+        """Returns a new IN_PROGRESS Feature whose QA round has advanced by one.
+
+        The rework loop and the increment are **one operation**, expressed as one
+        method, because ADR-007 7.4 makes correctness depend on the round
+        advancing on exactly that transition and on no other. Separating them
+        would leave two calls a caller could make independently.
+
+        This is the **only** way a Feature's ``qa_round`` changes. Nothing
+        decrements it, and no other transition touches it.
+        """
+        return self._evolve(
+            status=FeatureStatus.IN_PROGRESS,
+            qa_round=self.qa_round + 1,
+            updated_at=at or utc_now(),
+        )

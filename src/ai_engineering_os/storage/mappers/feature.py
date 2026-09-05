@@ -22,6 +22,7 @@ def to_domain_feature(row: FeatureRow) -> Feature:
             "in_scope": row.in_scope,
             "out_of_scope": row.out_of_scope,
             "acceptance_criteria": row.acceptance_criteria,
+            "qa_round": row.qa_round,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         },
@@ -40,6 +41,7 @@ def apply_feature(feature: Feature, row: FeatureRow) -> None:
     row.in_scope = list(feature.in_scope)
     row.out_of_scope = list(feature.out_of_scope)
     row.acceptance_criteria = list(feature.acceptance_criteria)
+    row.qa_round = feature.qa_round
     row.created_at = feature.created_at
     row.updated_at = feature.updated_at
 

@@ -52,10 +52,10 @@ Two habits follow from that, and both are load-bearing:
 
 ## Current Status
 
-**Foundation v1 — Checkpoints 1 through 5 delivered. Checkpoint 6 is blocked.**
+**Foundation v1 — Checkpoints 1 through 6 delivered. The OS can now enforce.**
 
 ```
-606 tests passing · ruff clean · mypy clean · 8 migrations applied
+685 tests passing · ruff clean · mypy clean · 9 migrations applied
 ```
 
 | # | Checkpoint | Status |
@@ -65,15 +65,20 @@ Two habits follow from that, and both are load-bearing:
 | 3 | Rule & policy engine | Done |
 | 4 | Persistence & storage | Done |
 | 5 | Event store & LISTEN/NOTIFY bus | Done |
-| 6 | OS Kernel & transition runner | **Blocked** — see below |
+| 6 | OS Kernel & transition runner | Done |
 | 7 | FastAPI control plane | Not started |
 | 8 | Typed client & vertical slice | Not started |
 
-**Checkpoint 6 is blocked by four Builder decisions, not by code.** The Rule
-Coverage Gate ([ADR-004](adr/ADR-004.md) 4.12) forbids the Kernel operating while a
-required transition condition is unenforced, and four conditions depend on
-[Blueprint §14](docs/02-implementation/Implementation-Blueprint.md) items 15, 16, 17
-and 18. Several ADRs explicitly forbid deciding these inside an implementation.
+**The Rule Coverage Gate now passes.** It forbade the Kernel operating while any
+required transition condition was unenforced ([ADR-004](adr/ADR-004.md) 4.12), and
+it was designed to fail from Checkpoint 3 onwards. Twenty-three of the twenty-four
+required conditions are enforced by a rule or guaranteed by a domain invariant; the
+twenty-fourth is performed by the transition runner itself
+([ADR-007](adr/ADR-007.md) 7.5).
+
+**What that means in practice:** the OS refuses a transition whose conditions are
+not met, leaves the entity untouched, and records why — durably, in the same
+committed transaction that discovered the refusal.
 
 **Start here:** [brain/Project-State.md](brain/Project-State.md) for where things
 stand, [brain/Current-Focus.md](brain/Current-Focus.md) for the single next action.
@@ -87,7 +92,7 @@ when the Checkpoint 8 vertical slice runs end to end.
 
 | Path | Contents |
 | :--- | :--- |
-| `src/ai_engineering_os/` | The implementation — `domain`, `state`, `rules`, `storage`, `events` |
+| `src/ai_engineering_os/` | The implementation — `domain`, `state`, `rules`, `storage`, `events`, `core` |
 | `tests/` | Unit, integration and architectural boundary tests |
 | `migrations/` | Alembic revisions; applied migrations are never edited |
 | `adr/` | Architecture Decision Records — the authoritative decision trail |
@@ -103,14 +108,17 @@ when the Checkpoint 8 vertical slice runs end to end.
 ```
 domain  ←  state,  rules,  storage,  events
 storage ←  events
-                        core (CP6) ← everything
+                        core ← everything
                                      api (CP7) ← core
 ```
 
 `domain` depends on nothing but Pydantic and the standard library. `rules` must not
-import `state`. `storage` must not import `rules`. These are enforced by tests in
-`tests/unit/test_domain_isolation.py` and `test_storage_boundaries.py`, because the
-damage from breaking them appears much later than the mistake.
+import `state`. `storage` must not import `rules`. **Nothing imports `core`** — it
+is the only composer, and an import back into it would make the Kernel reachable
+from a layer that must not mutate. These are enforced by tests in
+`tests/unit/test_domain_isolation.py`, `test_storage_boundaries.py` and
+`test_rule_invariants.py`, because the damage from breaking them appears much later
+than the mistake.
 
 `ui/` sits outside this graph entirely and imports nothing.
 

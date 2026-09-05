@@ -2,11 +2,14 @@
 
 Both are **append-only audit history** (ADR-004 4.15). Repeat QA is normal: a
 report is scoped to a Task Revision, and the rework loop produces more of them.
-**Nothing here limits a Feature to one QA Report**, and no column identifies a
-"current" or "latest" report — the authoritative QA-result selection mechanism
-remains UNRESOLVED (ADR-004 4.15, Blueprint 14, item 18) and must not be
-invented. There is deliberately no sequence number, no ``current_report_id``,
-and no marker of any kind.
+**Nothing here limits a Feature to one QA Report.**
+
+``qa_round`` records which build-and-check cycle of the Feature a report belongs
+to (ADR-007 7.4), which is how the current defect position is selected. It is
+**not** a recency marker: there is still no sequence number, no
+``current_report_id``, no timestamp comparison and no "latest" flag. The round
+is stamped by the Kernel from ``features.qa_round`` when the report is recorded,
+and reports from earlier rounds stay exactly as they were written.
 
 ``qa_defects`` is a **child table** (ADR-005 5.2) because
 ``QAInScopeZeroDefectsRule`` resolves ``Defect -> Task -> Feature`` per defect.
@@ -34,7 +37,10 @@ class QAReportRow(RowMetadataMixin, Base):
     """A structured, machine-first QA verification record."""
 
     __tablename__ = "qa_reports"
-    __table_args__ = (status_check("status", QAStatus, name="ck_qa_reports_status"),)
+    __table_args__ = (
+        status_check("status", QAStatus, name="ck_qa_reports_status"),
+        CheckConstraint("qa_round >= 1", name="ck_qa_reports_qa_round"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     feature_id: Mapped[UUID] = mapped_column(
@@ -44,6 +50,7 @@ class QAReportRow(RowMetadataMixin, Base):
     task_revision_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("task_revisions.id", ondelete="RESTRICT"), nullable=True
     )
+    qa_round: Mapped[int] = mapped_column(Integer, nullable=False)
     is_final_pass: Mapped[bool] = mapped_column(nullable=False)
     tested_scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     results: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
