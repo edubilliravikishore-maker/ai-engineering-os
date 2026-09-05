@@ -32,9 +32,11 @@ overclaimed as a guarantee.
 | [ADR-005](ADR-005.md) | Persistence architecture & Checkpoint 4 scope | Accepted 2026-09-02 |
 | [ADR-006](ADR-006.md) | Event layer architecture & Checkpoint 5 scope | Accepted 2026-09-04; §6.11 added same day |
 | [ADR-007](ADR-007.md) | The four blocked conditions & Checkpoint 6 preconditions | Accepted 2026-09-05 |
+| [ADR-008](ADR-008.md) | HTTP control plane architecture & Checkpoint 7 scope | Accepted 2026-09-05 |
 
-**ADR-008 is the next one**, if Checkpoint 6 implementation surfaces something
-ADR-007 did not foresee. See [brain/Current-Focus.md](../brain/Current-Focus.md).
+**ADR-009 is the next one**, recording how the event stream is read — the last
+thing standing between [the UI](../ui/README.md) and real data.
+See [brain/Current-Focus.md](../brain/Current-Focus.md).
 
 ## Template
 

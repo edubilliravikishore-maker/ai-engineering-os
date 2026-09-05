@@ -5,32 +5,35 @@
 
 ## The One Next Action
 
-**Establish the Checkpoint 7 decisions as ADR-008, before any API code exists.**
+**Implement Checkpoint 7 — the HTTP control plane, exactly as
+[ADR-008](../adr/ADR-008.md) authorises.** No code is written yet.
 
 Checkpoints 1 through 6 are delivered and green. **The OS enforces.** A transition
 whose conditions are not met is refused, the entity is left untouched, and the
 refusal is recorded durably in the same committed transaction that discovered it.
 
 Checkpoint 7 is the FastAPI control plane — the first layer that exposes any of
-this to the outside world. It is **not blocked**, but the established rhythm says
-the ADR comes first, and there are real questions to settle before writing routes.
+this to the outside world. **ADR-008 was accepted on 2026-09-05**, so the
+decisions are recorded and the implementation is what remains.
 
-## What Checkpoint 7 Has To Decide
+## What ADR-008 Ruled
 
-Not yet ruled on. These are the ones the record already points at:
+| # | Question | Ruling |
+| :--- | :--- | :--- |
+| 1 | How does the OS know who is asking? | Headers, resolved against `actors`, **role checked against the record** ([8.1](../adr/ADR-008.md#81-caller-identity-is-read-from-headers-and-resolved-against-actors)) |
+| 2 | How does a refusal travel? | 422 for every refusal; 404, 409, 400, 500 for the rest ([8.2](../adr/ADR-008.md#82-a-refusal-is-422-and-only-a-refusal-is)) |
+| 3 | What shape are the endpoints? | Named actions, not a generic transition endpoint ([8.3](../adr/ADR-008.md#83-named-action-endpoints-not-a-generic-transition-endpoint)) |
+| 4 | Does Checkpoint 7 expose events? | **No** — it becomes its own work, immediately after ([8.6](../adr/ADR-008.md#86-checkpoint-7-exposes-no-event-stream)) |
 
-- **How a rejection becomes an HTTP response.** [Blueprint §7.2](../docs/02-implementation/Implementation-Blueprint.md)
-  names `422 Unprocessable Entity` with the structured reasons.
-  [ADR-005](../adr/ADR-005.md) 5.12 is explicit that `NotFoundError`,
-  `ConcurrencyConflictError` and `PersistenceError` **carry no HTTP status codes**
-  and that the transport mapping belongs here.
-- **Who the requesting Actor is, and how the API knows.** Every Kernel operation
-  takes an initiator. Authentication is not designed anywhere.
-- **What the API exposes of the event stream**, which is what
-  [the UI](../ui/README.md) is waiting for.
-- **Whether the per-event-type payload schemas are settled here.**
-  [ADR-006](../adr/ADR-006.md) 6.5 deferred them for want of a consumer;
-  Checkpoint 6 wrote a deliberately minimal payload rather than guessing.
+Two were the Builder's rulings and the rest the author's under standing
+delegation; ADR-008's decision map records which is which.
+
+## The Largest Recorded Limitation In The System
+
+**Header identity is identification, not authentication** ([ADR-008](../adr/ADR-008.md) 8.1).
+Anyone who can reach the API can claim to be any Actor. Accepted deliberately for
+Foundation v1, which runs where the Builder controls it. It is written down rather
+than left implied, and it is not a backlog item to be picked up quietly.
 
 ## What Checkpoint 6 Delivered
 
@@ -84,8 +87,15 @@ consume them until Checkpoint 7 exposes them. Revisit when the Builder raises it
 rework or branch edge the Foundation v1 vertical slice does not walk, so none
 blocks anything. They are a recorded scope decision, not a debt to clear now.
 
+## After Checkpoint 7
+
+**The event read mechanism, as ADR-009.** The last thing standing between
+[the UI](../ui/README.md) and real data. Deferred deliberately by
+[ADR-008](../adr/ADR-008.md) 8.6, and recorded as *next*, not as someday.
+
 ## Definition Of Done For Checkpoint 7
 
 `pytest`, `ruff check`, `ruff format --check` and `mypy src` all green; the
-Checkpoint 7 endpoints exercised by integration tests; and
+Checkpoint 7 endpoints exercised by integration tests; **no route module importing
+`storage`, `rules`, `state` or `events`** ([ADR-008](../adr/ADR-008.md) 8.5); and
 [Project-State](Project-State.md) updated the same day.
